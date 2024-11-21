@@ -1,0 +1,1199 @@
+---
+title: "LIANA TB samples only"
+output: html_notebook
+author: Ivy liu 
+---
+
+```{r}
+library(Seurat)
+library(liana)
+library(tidyverse)
+library(magrittr)
+library(SingleCellExperiment)
+```
+
+```{r}
+obj.filtered<-readRDS( '../datasets/lung_integrated_reannotated_09262023.rds')
+```
+
+```{r}
+tb.only<-subset(obj.filtered, subset=TB=="PreviousTB")
+tb.only
+```
+```{r}
+liana_path <- system.file(package = "liana")
+```
+
+```{r}
+# Run liana
+
+DefaultAssay(tb.only)<-'RNA'
+tb.only<-ScaleData(tb.only, features=rownames(tb.only))
+sc_rna<-DietSeurat(
+  tb.only,
+  counts = TRUE,
+  data = TRUE,
+  scale.data = TRUE,
+  features = NULL,
+  assays = 'RNA',
+  dimreducs = 'UMAP',
+)
+liana_test <- liana_wrap(sc_rna, idents_col = 'cell.type.t_combined')
+
+# Liana returns a list of results, each element of which corresponds to a method
+liana_test %>% dplyr::glimpse()
+```
+```{r}
+liana_test <- liana_aggregate(liana_test)
+liana_test
+```
+
+```{r}
+
+for (cell_type in unique(liana_test$source)){
+  print(cell_type)
+  pdf(sprintf('../new_man_figs/Fig4/TB_only_liana_dotplot_rna_data_%s.pdf', gsub('/', '.', cell_type)), 12, 8)
+  p<-liana_dotplot(liana_test,source_groups =cell_type,
+                target_groups = ordered_groups,
+                ntop = 20)+ theme(axis.text.x = element_text(angle = 45, size=10,  vjust = 1, hjust = 1))
+  print(p)
+  dev.off()
+}
+```
+```{r}
+ggplot(liana_test, aes(x=aggregate_rank)) + geom_histogram()
+```
+
+
+
+```{r}
+liana_trunc <- liana_test %>%
+   # only keep interactions concordant between methods
+  filter(aggregate_rank <= 0.01) # note that these pvals are already corrected
+
+# #further filter by top 50% of the interactions
+# liana_trunc<-liana_trunc%>%filter(aggregate_rank<=quantile(liana_trunc$aggregate_rank, 0.5))
+
+# select top 10 senders
+
+source_freq<-table(liana_trunc$source)%>%
+    as.data.frame() %>% 
+   arrange(desc(Freq))
+
+
+# select top 10 receivers
+target_freq<-table(liana_trunc$target)%>%
+    as.data.frame() %>% 
+   arrange(desc(Freq))
+
+heat_freq(liana_trunc, column_names_rot = 45)
+```
+```{r}
+ordered_groups<-c( 'Monocytes','DC','Inflammed_Monocytes','CD16_Monocytes','Low_complexity_Monocytes','Type1_IFN_Response_Monocytes', 'Macrophages|ARL4C,EMP1'  ,'Alveolar_Macrophages','Macrophages|Heatshock','Macrophages|LGMN,SEPP1','Macrophages|SPP1,CHI3L','Fibroblast|SERPINE2,COL1A1', 'Fibroblast|MMP1,CXCL5','Fibroblast|IL6,CCL2','Fibroblast|COMP,CILP','Fibroblast|HSP','Neutrophil|MMP9, CST7', 'Neutrophil|Heatshock', 'Neutrophil|GBP1,GBP5', 'AT1', 'AT2','Club cells', 'Endothelial', 'Plasma','B cell', 'Mast', 'NK',  'CD8 cytotoxic T', 'T')
+pdf('../new_man_figs/Fig4/TB_only_liana_rna_data_heat_freq.pdf', 12, 10)
+heat_freq(liana_trunc%>%filter(source%in%ordered_groups)%>%filter(target%in%ordered_groups), column_names_rot = 45)
+dev.off()
+```
+## plot circos plot
+```{r}
+library(circlize)
+```
+```{r}
+
+p <- chord_freq(liana_trunc,
+                source_groups = ordered_groups,
+                target_groups = ordered_groups,cex=0.5, facing='clockwise', adj = c(-0.5, 0))
+pdf('../new_man_figs/Fig4/liana_circ_plot_cell.type.t_combined.pdf', 15, 15)
+print(p)
+dev.off()
+```
+
+```{r}
+saveRDS(liana_test, '../datasets/new_liana_run_TB_only_t_combined_celltype.rds')
+```
+
+
+
+# Try controls only 
+
+```{r}
+ctr.only<-subset(obj.filtered, subset=TB=="Negative")
+ctr.only
+```
+```{r}
+DefaultAssay(ctr.only)<-'RNA'
+ctr.only<-ScaleData(ctr.only, features=rownames(ctr.only))
+sc_rna<-DietSeurat(
+  ctr.only,
+  counts = TRUE,
+  data = TRUE,
+  scale.data = TRUE,
+  features = NULL,
+  assays = 'RNA',
+  dimreducs = 'UMAP',
+)
+liana_test <- liana_wrap(sc_rna, idents_col = 'cell.type.t_combined')
+
+# Liana returns a list of results, each element of which corresponds to a method
+liana_test %>% dplyr::glimpse()
+```
+```{r}
+liana_test <- liana_aggregate(liana_test)
+saveRDS(liana_test, '../datasets/new_liana_ctr_only_t_combined_celltype.rds')
+```
+```{r}
+for (cell_type in unique(liana_test$source)){
+  print(cell_type)
+  pdf(sprintf('../new_man_figs/Fig4/ctr_only_liana_dotplot_rna_data_%s.pdf', gsub('/', '.', cell_type)), 12, 8)
+  p<-liana_dotplot(liana_test,source_groups =cell_type,
+                target_groups = ordered_groups,
+                ntop = 20)+ theme(axis.text.x = element_text(angle = 45, size=10,  vjust = 1, hjust = 1))
+  print(p)
+  dev.off()
+}
+```
+```{r}
+liana_trunc <- liana_test %>%
+   # only keep interactions concordant between methods
+  filter(aggregate_rank <= 0.01) # note that these pvals are already corrected
+
+
+# select top 10 senders
+
+source_freq<-table(liana_trunc$source)%>%
+    as.data.frame() %>% 
+   arrange(desc(Freq))
+
+
+# select top 10 receivers
+target_freq<-table(liana_trunc$target)%>%
+    as.data.frame() %>% 
+   arrange(desc(Freq))
+
+heat_freq(liana_trunc, column_names_rot = 45)
+```
+```{r}
+pdf('../new_man_figs/Fig4/ctr_only_liana_rna_data_heat_freq.pdf', 12, 10)
+heat_freq(liana_trunc%>%filter(source%in%ordered_groups)%>%filter(target%in%ordered_groups), column_names_rot = 45)
+dev.off()
+```
+```{r}
+
+p <- chord_freq(liana_trunc,
+                source_groups = ordered_groups,
+                target_groups = ordered_groups,cex=0.5, facing='clockwise', adj = c(-0.5, 0))
+pdf('../new_man_figs/Fig4/ctr_only_liana_circ_plot_cell.type.t_combined.pdf', 15, 15)
+print(p)
+dev.off()
+```
+# comapre frequencies
+
+
+```{r}
+get_freq <- function(liana_res){
+    liana_res %>%
+        group_by(source, target) %>%
+        summarise(freq = n(), .groups = 'keep') %>%
+        pivot_wider(id_cols = source,
+                    names_from = target,
+                    values_from = freq,
+                    values_fill = 0) %>%
+        arrange(source) %>%
+        ungroup() %>%
+        as.data.frame() %>%
+        column_to_rownames('source') %>%
+        as.matrix()
+}
+mat1<-liana_trunc %>%get_freq(.)
+liana_res_TB<-readRDS('../datasets/new_liana_run_TB_only_t_combined_celltype.rds')
+liana_trunc2<-liana_res_TB%>%filter(aggregate_rank <= 0.01)
+mat2<-liana_trunc2 %>%get_freq(.)
+rowname_union<-union(rownames(mat2), rownames(mat1))
+colname_union<-union(colnames(mat2), colnames(mat1))
+
+temp1<-matrix(0, length(rowname_union), length(colname_union))
+rownames(temp1)<-rowname_union
+colnames(temp1)<-colname_union
+temp1[rownames(mat1), colnames(mat1)]<-mat1
+
+
+
+temp2<-matrix(0, length(rowname_union), length(colname_union))
+rownames(temp2)<-rowname_union
+colnames(temp2)<-colname_union
+temp2[rownames(mat2), colnames(mat2)]<-mat2
+# TB - Control frequencies
+diff_mat<-temp2-temp1
+
+p1<-liana_heatmap(
+  diff_mat,
+  font_size = 12,
+  grid_text = FALSE,
+  name = "Frequency",
+  pallette = c("blue","white", "red"),
+  row_title = "Sender (Cell types)",
+  column_title = "Receiver (Cell types)",
+   column_names_rot = 45
+)
+```
+
+# normalize the difference to 1 and -1
+
+
+```{r}
+max_diff<-max(diff_mat)
+min_diff<-min(diff_mat)
+p2<-liana_heatmap(
+  diff_mat/max(abs(max_diff), abs(min_diff)),
+  font_size = 12,
+  grid_text = FALSE,
+  name = "Frequency",
+  pallette = c("blue","white", "red"),
+  row_title = "Sender (Cell types)",
+  column_title = "Receiver (Cell types)",
+   column_names_rot = 45
+)
+```
+```{r}
+library(patchwork)
+pdf('../new_man_figs/Fig4/new_liana_interaction_freq_change.pdf', 12, 10)
+print(p1)
+print(p2)
+dev.off()
+```
+## Make circo plot to visualize the interactions strengthened in TB (credit: Constantine)
+- we can calculate FC between natmi.edge_specificity (which is the product of receiver receptor expression and sender ligand expression) between TB and control results
+```{r}
+
+liana_test<-readRDS('../datasets/new_liana_ctr_only_t_combined_celltype.rds')
+liana_trunc<-liana_test%>%filter(aggregate_rank <= 0.01)
+liana_res_TB<-readRDS('../datasets/new_liana_run_TB_only_t_combined_celltype.rds')
+liana_trunc2<-liana_res_TB%>%filter(aggregate_rank <= 0.01)
+liana_trunc2_tmp<-liana_trunc2[,c("source", "target", "ligand.complex", "receptor.complex","natmi.edge_specificity")]
+liana_trunc1_tmp<-liana_trunc[,c("source", "target", "ligand.complex", "receptor.complex","natmi.edge_specificity")]
+liana_trunc2_tmp <- liana_trunc2_tmp %>% 
+        rename("natmi.edge_specificity" = "edge_weight_TB")
+liana_trunc1_tmp <- liana_trunc1_tmp %>% 
+        rename("natmi.edge_specificity" = "edge_weight_CTR")
+liana_both<-merge(x=liana_trunc2_tmp,y=liana_trunc1_tmp, 
+        by=c("source", "target", "ligand.complex", "receptor.complex"), all=TRUE)
+
+liana_both[is.na(liana_both)] <- 0
+
+liana_both$edge_FC<-liana_both$edge_weight_TB/liana_both$edge_weight_CTR
+
+
+liana_both$edge_FC[liana_both$edge_FC == Inf] =max(liana_both$edge_FC[liana_both$edge_FC != Inf])
+```
+
+```{r}
+group.anno.col.colors <- c("1" = "#faaa5e", "2" = "#ca5e4a", "3" = "#4e88b9", "4" = "#6ca659", "5" = "#4e4ca0", "6"="#24492e", "7"="#edd746")
+poslogFC.cellcell.count <- liana_both%>%filter(edge_FC>1)%>% group_by(source, target)%>% summarise(count.interacts = n())%>%filter(target!='Proliferating')%>%filter(source!='Proliferating')
+neglogFC.cellcell.count <- liana_both%>%filter(edge_FC<1)%>% group_by(source, target)%>% summarise(count.interacts = n())%>%filter(target!='Proliferating')%>%filter(source!='Proliferating')
+
+
+
+make_corr_heatmap<-function(group.anno.col, group.anno.col.colors,CellTypeCor_Pearson,figdir, title ){
+  paletteLength <- 50
+  myColor <- colorRampPalette(c("#6d8fb9", "white", "#cb604c"))(paletteLength)
+  # use floor and ceiling to deal with even/odd length pallettelengths
+  myBreaks <- c(seq(min(CellTypeCor_Pearson), 0, length.out=ceiling(paletteLength/2) + 1), 
+                seq(max(CellTypeCor_Pearson)/paletteLength, max(CellTypeCor_Pearson), length.out=floor(paletteLength/2)))
+  
+  correlation.heatmap <- pheatmap(CellTypeCor_Pearson, color = myColor, breaks = myBreaks,
+                   filename = paste0(figdir, "/",title, ".pdf"),
+                   cutree_rows = length(group.anno.col.colors),cutree_cols = length(group.anno.col.colors), border_color = NA,
+                   annotation_col = group.anno.col, treeheight_col = 0,
+                   annotation_colors = list(Group = group.anno.col.colors), show_colnames = FALSE)
+}
+
+#-- signaling cluster membership could change between conditions
+# cluster for TB upregulation based on the number of interactions between cell types 
+cluster_tb_signaling_wide<-poslogFC.cellcell.count%>%pivot_wider(id_cols= source, names_from = target, values_from =count.interacts )
+cluster_tb_signaling_wide[is.na(cluster_tb_signaling_wide)] <- 0
+cluster_tb_signaling_wide<-cluster_tb_signaling_wide%>%as.data.frame(.)
+rownames(cluster_tb_signaling_wide)<-cluster_tb_signaling_wide$source
+cluster_tb_signaling_wide<-cluster_tb_signaling_wide[,-c(1)]
+#make sender cluster
+tb_senderCor_Pearson <- cor(t(cluster_tb_signaling_wide), method = "pearson") 
+correlation.heatmap <- pheatmap(tb_senderCor_Pearson)
+Groups <- sort(cutree(correlation.heatmap$tree_row, k=7)) #use 7 clusters for TB sender
+group.anno.tb.sender <- data.frame(Group = Groups[colnames(tb_senderCor_Pearson)]) %>% 
+  dplyr::mutate(Group = factor(as.character(Group), levels = c("1", "2", "3", "4","5", "6","7")))
+
+title<-'Cellsubtype_CorrelationHeatmap_tb_sender'
+make_corr_heatmap(group.anno.tb.sender, group.anno.col.colors,tb_senderCor_Pearson,figdir, title  )
+
+#make TB receiver clusters
+tb_receiverCor_Pearson <- cor(cluster_tb_signaling_wide, method = "pearson")
+correlation.heatmap <- pheatmap(tb_receiverCor_Pearson)
+Groups <- sort(cutree(correlation.heatmap$tree_row, k=3)) # use 3, there is really no clear clustering patterns here
+group.anno.tb.receiver <- data.frame(Group = Groups[colnames(tb_receiverCor_Pearson)]) %>% 
+  dplyr::mutate(Group = factor(as.character(Group), levels = c("1", "2", "3")))
+
+title<-'Cellsubtype_CorrelationHeatmap_tb_receiver'
+make_corr_heatmap(group.anno.tb.receiver, group.anno.col.colors[1:3],tb_receiverCor_Pearson,figdir, title  )
+
+#cluster for control upregulation
+cluster_ctr_signaling_wide<-neglogFC.cellcell.count%>%pivot_wider(id_cols= source, names_from = target, values_from =count.interacts )
+cluster_ctr_signaling_wide[is.na(cluster_ctr_signaling_wide)] <- 0
+cluster_ctr_signaling_wide<-cluster_ctr_signaling_wide%>%as.data.frame(.)
+rownames(cluster_ctr_signaling_wide)<-cluster_ctr_signaling_wide$source
+cluster_ctr_signaling_wide<-cluster_ctr_signaling_wide[,-c(1)]
+#make sender cluster
+ctr_senderCor_Pearson <- cor(t(cluster_ctr_signaling_wide), method = "pearson")#correlation between columns which are receivers
+correlation.heatmap <- pheatmap(ctr_senderCor_Pearson)
+Groups <- sort(cutree(correlation.heatmap$tree_row, k=4))
+group.anno.ctr.sender <- data.frame(Group = Groups[colnames(ctr_senderCor_Pearson)]) %>% 
+  dplyr::mutate(Group = factor(as.character(Group), levels = c("1", "2", "3", "4")))
+
+figdir<-'../new_man_figs/Fig4'
+title<-'Cellsubtype_CorrelationHeatmap_ctr_sender'
+
+make_corr_heatmap(group.anno.ctr.sender, group.anno.col.colors[1:4],ctr_senderCor_Pearson,figdir, title  )
+#make receiver clusters
+ctr_receiverCor_Pearson <- cor(cluster_ctr_signaling_wide, method = "pearson")#correlation between columns which are receivers
+correlation.heatmap <- pheatmap(ctr_receiverCor_Pearson)
+Groups <- sort(cutree(correlation.heatmap$tree_row, k=6))
+group.anno.ctr.receiver <- data.frame(Group = Groups[colnames(ctr_receiverCor_Pearson)]) %>% 
+  dplyr::mutate(Group = factor(as.character(Group), levels = c("1", "2", "3", "4","5","6")))
+title<-'Cellsubtype_CorrelationHeatmap_ctr_receiver'
+make_corr_heatmap(group.anno.ctr.receiver, group.anno.col.colors[1:6],ctr_receiverCor_Pearson,figdir, title  )
+
+
+# pos.min.thresh<-0
+# neg.min.thresh<-0
+# only show interactions passing 80% quantile in the circo plot
+pos.min.thresh<-quantile(poslogFC.cellcell.count$count.interacts, 0.8)
+neg.min.thresh<-quantile(neglogFC.cellcell.count$count.interacts, 0.8)
+
+poslogFC.cellcell.count <- poslogFC.cellcell.count %>% ungroup() %>% dplyr::filter(count.interacts > pos.min.thresh) %>% dplyr::mutate(upregulatedIn = "TB")
+neglogFC.cellcell.count <- neglogFC.cellcell.count %>% ungroup() %>% dplyr::filter(count.interacts > neg.min.thresh) %>% dplyr::mutate(upregulatedIn = "Control")
+
+dataframe.choice <- rbind(poslogFC.cellcell.count, neglogFC.cellcell.count)
+dataframe.choice <- dataframe.choice[,c("source", "target", "count.interacts", "upregulatedIn")]
+
+library(viridis)
+library(patchwork)
+library(ggpubr)
+library(cowplot)
+library(rstatix)
+library(pheatmap)
+
+
+
+# save the annotations into one dataframe!!
+group.anno.ctr.receiver%>%write.csv('../new_man_tables/liana_receiver_cluster_ctr.csv')
+group.anno.ctr.sender%>%write.csv('../new_man_tables/liana_sender_cluster_ctr.csv')
+group.anno.tb.receiver%>%write.csv('../new_man_tables/liana_receiver_cluster_tb.csv')
+group.anno.tb.sender%>%write.csv('../new_man_tables/liana_sender_cluster_tb.csv')
+
+group.anno.ctr.receiver<-read.csv('../new_man_tables/liana_receiver_cluster_ctr.csv', row.names = 1)
+group.anno.ctr.sender<-read.csv('../new_man_tables/liana_sender_cluster_ctr.csv', row.names = 1)
+group.anno.tb.receiver<-read.csv('../new_man_tables/liana_receiver_cluster_tb.csv', row.names = 1)
+group.anno.tb.sender<-read.csv('../new_man_tables/liana_sender_cluster_tb.csv', row.names = 1)
+
+dataframe.choice$SenderGroup<-'NA'
+dataframe.choice$ReceiverGroup<-'NA'
+dataframe.choice[dataframe.choice$upregulatedIn == "TB", 'SenderGroup']<-paste0('S.Group', group.anno.tb.sender[dataframe.choice[dataframe.choice$upregulatedIn == "TB",]$source,])
+dataframe.choice[dataframe.choice$upregulatedIn == "TB", 'ReceiverGroup']<-paste0('R.Group', group.anno.tb.receiver[dataframe.choice[dataframe.choice$upregulatedIn == "TB",]$target,])
+
+dataframe.choice[dataframe.choice$upregulatedIn == "Control", 'SenderGroup']<-paste0('S.Group', group.anno.ctr.sender[dataframe.choice[dataframe.choice$upregulatedIn == "Control",]$source,])
+dataframe.choice[dataframe.choice$upregulatedIn == "Control", 'ReceiverGroup']<-paste0('R.Group', group.anno.ctr.receiver[dataframe.choice[dataframe.choice$upregulatedIn == "Control",]$target,])
+dataframe.choice<-dataframe.choice[,c('SenderGroup','ReceiverGroup','count.interacts', 'upregulatedIn',
+                                      'source','target')]
+
+order <- c("Group1", "Group2", "Group3", "Group4", "Group5", "Group6", "Group7")
+sender.order <- paste0("S.", order)
+sender.order <- sender.order[sender.order %in% dataframe.choice$SenderGroup]
+receiver.order <- paste0("R.", rev(order))
+receiver.order <- receiver.order[receiver.order %in% dataframe.choice$ReceiverGroup]
+order.vec <- c(rev(sender.order), rev(receiver.order))
+
+mapping.df <- data.frame(sender.group = paste0("S.", order),
+                         receiver.group = paste0("R.", order),
+                         colors = c("1" = "#faaa5e", "2" = "#ca5e4a", "3" = "#4e88b9", "4" = "#6ca659", "5" = "#4e4ca0","6"="#24492e", "7"="#edd746"))
+colors.groups <- mapping.df$colors
+names(colors.groups) <- order
+sender.colors.groups <- colors.groups
+names(sender.colors.groups) <- paste0("S.", order)
+sender.colors.groups <- sender.colors.groups[names(sender.colors.groups) %in% sender.order]
+
+receiver.colors.groups <- rev(colors.groups)
+names(receiver.colors.groups) <- paste0("R.", rev(order))
+receiver.colors.groups <- receiver.colors.groups[names(receiver.colors.groups) %in% receiver.order]
+
+combined.colors <- c(sender.colors.groups, receiver.colors.groups)
+
+
+order.vec.high<-c(paste0('S.Group', rev(seq(1, 7))), paste0('R.Group', seq(1, 3)))
+order.vec.low<-c(paste0('S.Group', rev(seq(1, 4))), paste0('R.Group', seq(1, 6)))
+dataframe.choice.COPY<-dataframe.choice
+dataframe.choice<-dataframe.choice.COPY[dataframe.choice.COPY$upregulatedIn == "TB",]
+circos.high.fcn <- function(){
+  circos.clear()
+  circos.par(start.degree = 270)
+  chordDiagram(dataframe.choice, directional = -1,
+               order = order.vec.high, big.gap = 15,
+               # link.visible = ((dataframe.choice$upregulatedIn == "TB")),
+               grid.col = combined.colors[names(combined.colors)%in%order.vec.high], link.zindex = rank(dataframe.choice[[3]]),
+               direction.type = c("arrows", "diffHeight"), diffHeight  = 0, link.arr.type = "big.arrow",
+               annotationTrack = c("grid"), annotationTrackHeight = mm_h(4),
+               preAllocateTracks = list(track.height = mm_h(6), track.margin = c(mm_h(2), 0)))
+  for(si in get.all.sector.index()) {
+    label.ii <- substr(si, 3, nchar(si))
+    xlim = get.cell.meta.data("xlim", sector.index = si, track.index = 2)
+    ylim = get.cell.meta.data("ylim", sector.index = si, track.index = 2)
+    circos.text(mean(xlim), mean(ylim), label.ii, sector.index = si, track.index = 2, 
+                facing = "bending.inside", niceFacing = TRUE, col = "white", cex = 0.5)
+  }
+  highlight.sector(dataframe.choice$SenderGroup, track.index = 1, col = "#f46d5a", 
+                   text = "Sender", cex = 1.2, text.col = "white", facing = "bending.inside", niceFacing = FALSE)
+  highlight.sector(dataframe.choice$ReceiverGroup, track.index = 1, col = "#ffb1a6", 
+                   text = "Receiver", cex = 1.2, facing = "bending.inside", text.col = "white", niceFacing = FALSE)
+  title("Network of Interactions\nStrengthened in TB disease lungs")
+}
+dataframe.choice<-dataframe.choice.COPY[dataframe.choice.COPY$upregulatedIn == "Control",]
+circos.low.fcn <- function(){
+  circos.clear()
+  circos.par(start.degree = 270)
+  chordDiagram(dataframe.choice, directional = -1,
+               order = order.vec.low, big.gap = 15,
+               # link.visible = ((dataframe.choice$upregulatedIn == "Control")),
+               grid.col = combined.colors[names(combined.colors)%in%order.vec.low], link.zindex = rank(dataframe.choice[[3]]),
+               direction.type = c("arrows", "diffHeight"), diffHeight  = 0, link.arr.type = "big.arrow",
+               annotationTrack = c("grid"), annotationTrackHeight = mm_h(4),
+               preAllocateTracks = list(track.height = mm_h(6), track.margin = c(mm_h(2), 0)))
+  for(si in get.all.sector.index()) {
+    label.ii <- substr(si, 3, nchar(si))
+    xlim = get.cell.meta.data("xlim", sector.index = si, track.index = 2)
+    ylim = get.cell.meta.data("ylim", sector.index = si, track.index = 2)
+    circos.text(mean(xlim), mean(ylim), label.ii, sector.index = si, track.index = 2, 
+                facing = "bending.inside", niceFacing = TRUE, col = "white", cex = 0.8)
+  }
+  highlight.sector(dataframe.choice$SenderGroup, track.index = 1, col = "#f46d5a", 
+                   text = "Sender", cex = 1.2, text.col = "white", facing = "bending.inside", niceFacing = FALSE)
+  highlight.sector(dataframe.choice$ReceiverGroup, track.index = 1, col = "#ffb1a6", 
+                   text = "Receiver", cex = 1.2, facing = "bending.inside", text.col = "white", niceFacing = FALSE)
+  title("Network of Interactions\nStrengthened in control lungs")
+}
+
+# for some reason need to make the figure for high first right after running the function code, 
+# otherwise would run into order must include all sector error prob because the other figure has different input
+circos.agrob.high <- cowplot::as_grob(circos.high.fcn)
+pdf("../new_man_figs/Fig4/circo_subtypeclusterGroup_Interactions_LIANA_TB_upregulated_top80Percentile.pdf", width = width.in, height = height.in, useDingbats = FALSE)
+  ggarrange(circos.agrob.high)
+dev.off()
+circos.agrob.low <- cowplot::as_grob(circos.low.fcn)
+pdf("../new_man_figs/Fig4/circo_subtypeclusterGroup_Interactions_LIANA_CTR_upregulated_top80Percentile.pdf", width = width.in, height = height.in, useDingbats = FALSE)
+  ggarrange(circos.agrob.low)
+dev.off()
+
+
+```
+
+
+# do ligand activity analysis based on LIANA results
+```{r}
+library(viridis)
+library(patchwork)
+library(ggpubr)
+library(cowplot)
+library(rstatix)
+library(pheatmap)
+
+pospleioneg.colorvec <- c("#ad2524", "#572b88", "#046c9a")
+font.size = 16
+
+liana_test<-readRDS('../datasets/new_liana_ctr_only_t_combined_celltype.rds')
+liana_trunc<-liana_test%>%filter(aggregate_rank <= 0.01)
+liana_res_TB<-readRDS('../datasets/new_liana_run_TB_only_t_combined_celltype.rds')
+liana_trunc2<-liana_res_TB%>%filter(aggregate_rank <= 0.01)
+liana_trunc2_tmp<-liana_trunc2[,c("source", "target", "ligand.complex", "receptor.complex","natmi.edge_specificity")]
+liana_trunc1_tmp<-liana_trunc[,c("source", "target", "ligand.complex", "receptor.complex","natmi.edge_specificity")]
+liana_trunc2_tmp <- liana_trunc2_tmp %>% 
+        rename("natmi.edge_specificity" = "edge_weight_TB")
+liana_trunc1_tmp <- liana_trunc1_tmp %>% 
+        rename("natmi.edge_specificity" = "edge_weight_CTR")
+liana_both<-merge(x=liana_trunc2_tmp,y=liana_trunc1_tmp, 
+        by=c("source", "target", "ligand.complex", "receptor.complex"), all=TRUE)
+
+liana_both[is.na(liana_both)] <- 0
+
+liana_both$edge_FC<-liana_both$edge_weight_TB/liana_both$edge_weight_CTR
+liana_both$edge_FC[liana_both$edge_FC == Inf] =max(liana_both$edge_FC[liana_both$edge_FC != Inf])
+
+liana_both <-liana_both%>%filter(target!='Proliferating')%>%filter(source!='Proliferating')
+
+##### Find where top ligands come from, in each burden condition #####
+average.sender.ligand.strength <- liana_both %>% dplyr::group_by(source, ligand.complex) %>% 
+  summarise(mean_FC = mean(edge_FC), sd_FC = sd(edge_FC), count_FC = n())
+
+group.anno.tb.sender<-read.csv('../new_man_tables/liana_sender_cluster_tb.csv', row.names = 1)
+group.anno.ctr.sender<-read.csv('../new_man_tables/liana_sender_cluster_ctr.csv', row.names = 1)
+average.sender.ligand.strength$TB.SenderGroup <- ""
+average.sender.ligand.strength$Control.SenderGroup <- ""
+average.sender.ligand.strength$TB.SenderGroup[average.sender.ligand.strength$source %in% rownames(group.anno.tb.sender)[group.anno.tb.sender$Group==1]] <- "Group1"
+average.sender.ligand.strength$TB.SenderGroup[average.sender.ligand.strength$source %in% rownames(group.anno.tb.sender)[group.anno.tb.sender$Group==2]] <- "Group2"
+average.sender.ligand.strength$TB.SenderGroup[average.sender.ligand.strength$source %in% rownames(group.anno.tb.sender)[group.anno.tb.sender$Group==3]] <- "Group3"
+average.sender.ligand.strength$TB.SenderGroup[average.sender.ligand.strength$source %in% rownames(group.anno.tb.sender)[group.anno.tb.sender$Group==4]] <- "Group4"
+average.sender.ligand.strength$TB.SenderGroup[average.sender.ligand.strength$source %in% rownames(group.anno.tb.sender)[group.anno.tb.sender$Group==5]] <- "Group5"
+average.sender.ligand.strength$TB.SenderGroup[average.sender.ligand.strength$source %in% rownames(group.anno.tb.sender)[group.anno.tb.sender$Group==6]] <- "Group6"
+average.sender.ligand.strength$TB.SenderGroup[average.sender.ligand.strength$source %in% rownames(group.anno.tb.sender)[group.anno.tb.sender$Group==7]] <- "Group7"
+
+average.sender.ligand.strength$Control.SenderGroup[average.sender.ligand.strength$source %in% rownames(group.anno.ctr.sender)[group.anno.ctr.sender$Group==1]] <- "Group1"
+average.sender.ligand.strength$Control.SenderGroup[average.sender.ligand.strength$source %in% rownames(group.anno.ctr.sender)[group.anno.ctr.sender$Group==2]] <- "Group2"
+average.sender.ligand.strength$Control.SenderGroup[average.sender.ligand.strength$source %in% rownames(group.anno.ctr.sender)[group.anno.ctr.sender$Group==3]] <- "Group3"
+average.sender.ligand.strength$Control.SenderGroup[average.sender.ligand.strength$source %in% rownames(group.anno.ctr.sender)[group.anno.ctr.sender$Group==4]] <- "Group4"
+
+
+average.sender.ligand.strength <- average.sender.ligand.strength %>% arrange(-mean_FC)
+average.sender.ligand.strength$rank <- 1:nrow(average.sender.ligand.strength)
+zero.truth.vec <- average.sender.ligand.strength$mean_FC == 0
+average.sender.ligand.strength$mean_FC[zero.truth.vec] = min(average.sender.ligand.strength$mean_FC[!zero.truth.vec])
+
+##### Set up bar plots of where the top ligands (whether most enriched in high or low burden) come from #####
+n.ligand <- round(0.1*nrow(average.sender.ligand.strength)) #top 10%
+high.ligands.group.count <- average.sender.ligand.strength %>% dplyr:: filter(rank <= n.ligand) %>% group_by(TB.SenderGroup) %>% summarise(ligand.count = n()) %>% dplyr::mutate(SenderGroup=TB.SenderGroup, ligand.prop = 100*ligand.count / sum(ligand.count), UpRegulatedIn = "TB")
+low.ligands.group.count <- average.sender.ligand.strength %>% dplyr:: filter(rank > (nrow(average.sender.ligand.strength) - n.ligand)) %>% group_by(Control.SenderGroup) %>% summarise(ligand.count = n()) %>% dplyr::mutate(SenderGroup=Control.SenderGroup, ligand.prop = 100*ligand.count / sum(ligand.count), UpRegulatedIn = "Control")
+high.ligands.group.count$TB.SenderGroup<-NULL
+# add the empty groups
+high.ligands.group.count<-rbind(high.ligands.group.count, list('ligand.count'=0, 'SenderGroup'='Group6','ligand.prop'=0, 'UpRegulatedIn'='TB'))
+high.ligands.group.count<-rbind(high.ligands.group.count, list('ligand.count'=0, 'SenderGroup'='Group7','ligand.prop'=0, 'UpRegulatedIn'='TB'))
+low.ligands.group.count$Control.SenderGroup<-NULL
+low.ligands.group.count<-rbind(low.ligands.group.count, list('ligand.count'=0, 'SenderGroup'='Group1','ligand.prop'=0, 'UpRegulatedIn'='Control'))
+all.ligands.group.count <- rbind(high.ligands.group.count, low.ligands.group.count)
+figdir<-'../new_man_figs/Fig4'
+pdf(paste0(figdir, "/", "Top10PercentLigands_TB.pdf"), useDingbats = FALSE, width = 5, height = 10)
+p.topligands.highburden <- ggplot(all.ligands.group.count %>% dplyr::filter(UpRegulatedIn == "TB"), aes(fill = SenderGroup, x = UpRegulatedIn, y = ligand.prop)) +
+  geom_bar(stat = "identity", color = "black") + theme_classic() + theme(text = element_text(size = font.size), axis.text.x = element_text(angle = 45, hjust = 1, size = 0.5*font.size), legend.position = "right") +
+  scale_fill_manual(values = c("Group1" = "#faaa5e", "Group2" = "#ca5e4a", "Group3" = "#4e88b9", "Group4" = "#6ca659", "Group5" = "#4e4ca0", "Group6"="#24492e", "Group7"="#edd746")) +
+  scale_y_continuous(expand = c(0,0)) + ylab('Percent of Top Decile Ligands\nSecreted from Group') + xlab('') + 
+  scale_x_discrete(labels = c("TB Lungs"))
+plot(p.topligands.highburden)
+dev.off()
+
+tb.ligands.group.count <- all.ligands.group.count %>% dplyr::filter(UpRegulatedIn == "TB")
+binom.test(x = tb.ligands.group.count$ligand.count[tb.ligands.group.count$SenderGroup == "Group1"],
+           n = sum(tb.ligands.group.count$ligand.count),
+           p = 1/nrow(tb.ligands.group.count))
+# number of successes = 160, number of trials = 199, p-value < 2.2e-16
+# alternative hypothesis: true probability of success is not equal to 0.1428571
+# 95 percent confidence interval:
+#  0.7419748 0.8567712
+# sample estimates:
+# probability of success 
+#              0.8040201
+
+pdf(paste0(figdir, "/", "Top10PercentLigands_Control.pdf"), useDingbats = FALSE, width = 5, height = 10)
+p.topligands.lowburden <- ggplot(all.ligands.group.count %>% dplyr::filter(UpRegulatedIn == "Control"), aes(fill = SenderGroup, x = UpRegulatedIn, y = ligand.prop)) +
+  geom_bar(stat = "identity", color = "black") + theme_classic() + theme(text = element_text(size = font.size), axis.text.x = element_text(angle = 45, hjust = 1, size = 0.5*font.size), legend.position = "right") +
+  scale_fill_manual(values = c("Group1" = "#faaa5e", "Group2" = "#ca5e4a", "Group3" = "#4e88b9", "Group4" = "#6ca659")) +
+  scale_y_continuous(expand = c(0,0)) + ylab('Percent of Top Decile Ligands\nSecreted from Group') + xlab('') + 
+  scale_x_discrete(labels = c("Control lungs"))
+plot(p.topligands.lowburden)
+dev.off()
+
+ctr.ligands.group.count <- all.ligands.group.count %>% dplyr::filter(UpRegulatedIn == "Control")
+binom.test(x = ctr.ligands.group.count$ligand.count[ctr.ligands.group.count$SenderGroup == "Group2"],
+           n = sum(ctr.ligands.group.count$ligand.count),
+           p = 1/nrow(ctr.ligands.group.count))
+
+# number of successes = 163, number of trials = 199, p-value < 2.2e-16
+# alternative hypothesis: true probability of success is not equal to 0.25
+# 95 percent confidence interval:
+#  0.7584566 0.8699631
+# sample estimates:
+# probability of success 
+#              0.8190955 
+
+# barplots by sender
+interact.sender.low.df <- liana_both %>% dplyr::filter(edge_FC < 1) %>% group_by(source) %>% summarise(neg_count = n())
+interact.sender.high.df <- liana_both %>% dplyr::filter(edge_FC > 1) %>% group_by(source) %>% summarise(pos_count = n())
+interact.sender.count.df <- full_join(x = interact.sender.low.df, y = interact.sender.high.df, by = "source")
+interact.sender.count.df[is.na(interact.sender.count.df)] <- 0
+
+plot.df <- interact.sender.count.df
+plot.df$source <- fct_reorder(plot.df$source, plot.df$pos_count, .desc = TRUE)
+plot.df$TB.SenderGroup <- ""
+plot.df$TB.SenderGroup[plot.df$source %in% rownames(group.anno.tb.sender)[group.anno.tb.sender$Group==1]] <- "Group1"
+plot.df$TB.SenderGroup[plot.df$source %in% rownames(group.anno.tb.sender)[group.anno.tb.sender$Group==2]] <- "Group2"
+plot.df$TB.SenderGroup[plot.df$source %in% rownames(group.anno.tb.sender)[group.anno.tb.sender$Group==3]] <- "Group3"
+plot.df$TB.SenderGroup[plot.df$source %in% rownames(group.anno.tb.sender)[group.anno.tb.sender$Group==4]] <- "Group4"
+plot.df$TB.SenderGroup[plot.df$source %in% rownames(group.anno.tb.sender)[group.anno.tb.sender$Group==5]] <- "Group5"
+plot.df$TB.SenderGroup[plot.df$source %in% rownames(group.anno.tb.sender)[group.anno.tb.sender$Group==6]] <- "Group6"
+plot.df$TB.SenderGroup[plot.df$source %in% rownames(group.anno.tb.sender)[group.anno.tb.sender$Group==7]] <- "Group7"
+
+pdf(paste0(figdir, "/", "TB_upregulatedInteractCounts_BarChart.pdf"), width = 6, height = 8, useDingbats = FALSE)
+p.highcfu.interact.counts <- ggplot(plot.df, aes(x = source, y = pos_count, fill = TB.SenderGroup)) + geom_bar(stat = "identity") + 
+  theme_classic() + scale_fill_manual(values = c("Group1" = "#faaa5e", "Group2" = "#ca5e4a", "Group3" = "#4e88b9", "Group4" = "#6ca659", "Group5" = "#4e4ca0", "Group6"="#24492e", "Group7"="#edd746")) + 
+  theme(text = element_text(size = font.size), legend.position = "none", axis.title.x = element_blank(), axis.text.x = element_text(angle = 45, hjust = 1, size = 0.5*font.size)) + 
+  scale_y_continuous(expand = c(0,0)) + ylab("Number of\nInteractions\nUpregulated in TB-diseased lungs")
+plot(p.highcfu.interact.counts)
+dev.off()
+
+plot.df$Control.SenderGroup[plot.df$source %in% rownames(group.anno.ctr.sender)[group.anno.ctr.sender$Group==1]] <- "Group1"
+plot.df$Control.SenderGroup[plot.df$source %in% rownames(group.anno.ctr.sender)[group.anno.ctr.sender$Group==2]] <- "Group2"
+plot.df$Control.SenderGroup[plot.df$source %in% rownames(group.anno.ctr.sender)[group.anno.ctr.sender$Group==3]] <- "Group3"
+plot.df$Control.SenderGroup[plot.df$source %in% rownames(group.anno.ctr.sender)[group.anno.ctr.sender$Group==4]] <- "Group4"
+
+plot.df$source <- fct_reorder(plot.df$source, plot.df$neg_count, .desc = TRUE)
+pdf(paste0(figdir, "/", "Control_upregulatedInteractCounts_BarChart.pdf"), width = 6, height = 8, useDingbats = FALSE)
+p.lowcfu.interact.counts <- ggplot(plot.df%>%filter(neg_count>0), aes(x = source, y = abs(neg_count), fill = Control.SenderGroup)) + geom_bar(stat = "identity") + 
+  theme_classic() + scale_fill_manual(values = c("Group1" = "#faaa5e", "Group2" = "#ca5e4a", "Group3" = "#4e88b9", "Group4" = "#6ca659", "Group5" = "#4e4ca0")) + 
+  theme(text = element_text(size = font.size), legend.position = "none", axis.title.x = element_blank(), axis.text.x = element_text(angle = 45, hjust = 1, size = 0.5*font.size)) + 
+  ylab("Number of\nInteractions\nUpregulated in TB-negative Lungs") + scale_y_continuous(expand = c(0,0))
+plot(p.lowcfu.interact.counts)
+dev.off()
+
+plot.df%>%write.csv('../new_man_tables/Fig4_upregulated_counts_byGroup_eachSender_barcharts.csv')
+##### Set up bar plot of top ligands, averaged across all senders #####
+
+
+
+#### first calculate mean of edges involving a ligand in each group, then take the weighted mean by count for each source
+average.ligand.strength<-liana_both %>% dplyr::group_by(ligand.complex, source) %>% 
+    summarise(mean_TB_edge=mean(edge_weight_TB), mean_CTR_edge=mean(edge_weight_CTR), count_FC = n())%>%ungroup()%>%group_by(ligand.complex)%>%mutate(weighted_mean_TB=sum(count_FC*mean_TB_edge)/sum(count_FC), weighted_mean_CTR= sum(count_FC*mean_CTR_edge)/sum(count_FC), total_interactions=sum(count_FC))%>%ungroup()%>%select(ligand.complex, weighted_mean_TB, weighted_mean_CTR, total_interactions)%>%unique()
+min.weighted.ctr <- min(average.ligand.strength$weighted_mean_CTR[average.ligand.strength$weighted_mean_CTR!=0])
+average.ligand.strength$weighted_mean_CTR[average.ligand.strength$weighted_mean_CTR==0] = 0.95*min.weighted.ctr
+min.weighted.tb <- min(average.ligand.strength$weighted_mean_TB[average.ligand.strength$weighted_mean_TB!=0])
+average.ligand.strength$weighted_mean_TB[average.ligand.strength$weighted_mean_TB==0] = 0.95*min.weighted.tb
+
+
+average.ligand.strength<-average.ligand.strength %>%mutate(weighted_mean_FC = weighted_mean_TB/weighted_mean_CTR)%>%
+  # mutate_all(~ifelse(is.infinite(.), .Machine$double.xmax, .))%>%
+mutate(log10_ligand_mean_FC = log10(weighted_mean_FC))%>% arrange(-weighted_mean_FC)
+write.table(average.ligand.strength,
+            file = "../new_man_tables/LigandStrength_LIANA_TBvControl_SummarizeAcrossAllSenders_weightedMean.csv",
+            sep = ",", row.names = FALSE)
+
+
+
+# do this by each sender
+plot.heatmap.df<-liana_both %>% dplyr::group_by(ligand.complex, source) %>% 
+    summarise(mean_TB_edge=mean(edge_weight_TB), mean_CTR_edge=mean(edge_weight_CTR), count_FC = n())%>%ungroup()%>% unique()
+min.ctr.edge<-min(plot.heatmap.df$mean_CTR_edge[plot.heatmap.df$mean_CTR_edge!=0])
+plot.heatmap.df$mean_CTR_edge[plot.heatmap.df$mean_CTR_edge==0] = 0.95*min.ctr.edge
+min.tb.edge<-min(plot.heatmap.df$mean_TB_edge[plot.heatmap.df$mean_TB_edge!=0])
+plot.heatmap.df$mean_TB_edge[plot.heatmap.df$mean_TB_edge==0] = 0.95*min.tb.edge
+plot.heatmap.df<-plot.heatmap.df%>%mutate(mean_FC=mean_TB_edge/mean_CTR_edge)%>%mutate(log10_ligand_mean_FC = log10(mean_FC))
+
+write.table(plot.heatmap.df, 
+            file = paste0("../new_man_tables/LigandStrength_LIANA_TBvControl_SummarizeByEachSenders_V2.csv"), 
+            sep = ",", row.names = FALSE)
+
+#define which ligand to plot
+chosen.ligands <- c(average.ligand.strength%>%ungroup()%>%slice_head(n=30)%>%pull(ligand.complex), average.ligand.strength%>%ungroup()%>%slice_tail(n=30)%>%pull(ligand.complex))
+
+average.ligand.strength <- average.ligand.strength %>% dplyr::filter(ligand.complex %in% chosen.ligands)
+
+plot.heatmap.df <- plot.heatmap.df %>% dplyr::filter(ligand.complex %in% chosen.ligands) %>% 
+  group_by(ligand.complex) %>%
+  dplyr::mutate(total_count = sum(count_FC), 
+                pos_count = sum( (log10_ligand_mean_FC > 0)*count_FC),
+                neg_count = sum( (log10_ligand_mean_FC < 0)*count_FC))
+
+
+
+ligand.labels <- plot.heatmap.df %>% 
+  dplyr::select(ligand.complex, total_count, pos_count, neg_count) %>%
+  unique() %>%
+  dplyr::mutate(Sign = case_when(pos_count > 1.5 * neg_count ~ "Positive",
+                                 neg_count > 1.5 * pos_count~ "Negative",
+                                 TRUE ~ "Pleiotropic"))
+
+
+plot.df <- average.ligand.strength %>% arrange(-log10_ligand_mean_FC)
+plot.df <- inner_join(x = plot.df, y = ligand.labels, by = "ligand.complex") %>% 
+  arrange(-log10_ligand_mean_FC)
+plot.df$ligand.complex <- factor(plot.df$ligand.complex, levels=plot.df$ligand.complex)
+plot.df$Sign = factor(plot.df$Sign, levels = c("Negative", "Pleiotropic", "Positive"))
+
+p.bar <- ggplot(plot.df, aes(x = ligand.complex, y = log10_ligand_mean_FC, fill = log10_ligand_mean_FC)) + geom_bar(stat = "identity") + 
+  theme_classic() + 
+  theme(text = element_text(size = font.size), legend.position = "none", axis.title.x = element_blank(), axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) + scale_y_discrete(expand = c(0,0)) + 
+  scale_fill_gradient2(low = "#046c9a", mid = "#ffffff", high = "#ad2524") +
+  ylab("logFC(Interaction Strength)\nBetween TB vs. Low\nControl Lungs") + scale_y_continuous(expand = c(0,0))
+
+plot.heatmap.df$ligand.complex <- factor(plot.heatmap.df$ligand.complex)
+order <- c(rownames(group.anno.tb.sender)[group.anno.tb.sender$Group==1],
+           rownames(group.anno.tb.sender)[group.anno.tb.sender$Group==2], 
+           rownames(group.anno.tb.sender)[group.anno.tb.sender$Group==3], 
+           rownames(group.anno.tb.sender)[group.anno.tb.sender$Group==4], 
+           rownames(group.anno.tb.sender)[group.anno.tb.sender$Group==5])
+plot.heatmap.df$source <- factor(plot.heatmap.df$source, levels = rev(order))
+plot.heatmap.df$TB.SenderGroup <- ""
+plot.heatmap.df$TB.SenderGroup[plot.heatmap.df$source %in% rownames(group.anno.tb.sender)[group.anno.tb.sender$Group==1]] <- "Group1"
+plot.heatmap.df$TB.SenderGroup[plot.heatmap.df$source %in% rownames(group.anno.tb.sender)[group.anno.tb.sender$Group==2]] <- "Group2"
+plot.heatmap.df$TB.SenderGroup[plot.heatmap.df$source %in% rownames(group.anno.tb.sender)[group.anno.tb.sender$Group==3]] <- "Group3"
+plot.heatmap.df$TB.SenderGroup[plot.heatmap.df$source %in% rownames(group.anno.tb.sender)[group.anno.tb.sender$Group==4]] <- "Group4"
+plot.heatmap.df$TB.SenderGroup[plot.heatmap.df$source %in% rownames(group.anno.tb.sender)[group.anno.tb.sender$Group==5]] <- "Group5"
+plot.heatmap.df$ligand.complex<-factor(plot.heatmap.df$ligand.complex, levels=plot.df$ligand.complex)
+#plot by TB sender group for now
+p.heatmap <- ggplot(plot.heatmap.df, aes(x = ligand.complex, y = source, fill = log10_ligand_mean_FC)) + geom_tile() + theme_classic() +
+  scale_x_discrete(position = "top", expand = c(0,0)) + scale_y_discrete(expand = c(0,0)) + 
+  scale_fill_gradient2(low = "#016099", mid = "#ffffff", high = "#ca5e4a") + facet_grid(TB.SenderGroup~., scales = "free", space = "free") + #facet by group
+  theme(text = element_text(size = font.size), legend.position = "bottom", axis.title.x = element_blank(), 
+        axis.text.x = element_blank(), axis.title.y = element_blank(),
+        strip.background = element_blank(), #remove background for facet labels
+        strip.text = element_text(
+    size = 6),
+        panel.border = element_rect(colour = "black", fill = NA), #add black border
+        panel.spacing = unit(0, "lines"))
+
+p.ligands.combined <- cowplot::plot_grid(plotlist = list(p.bar, p.heatmap), align = "v", 
+                                         nrow = 2, ncol = 1, axis = "lr", rel_heights = c(1, 1.25))
+plot(p.ligands.combined)
+pdf(paste0(figdir, "/", "StrongestLigandsbyCellType_BarChartHeatmap.pdf"), useDingbats = FALSE, width = 14, height = 10)
+plot(p.ligands.combined)
+dev.off()
+```
+
+# plot specific fibroblast interactions
+
+```{r}
+average.ligand.strength<-read_csv( "../new_man_tables/LigandStrength_LIANA_TBvControl_SummarizeAcrossAllSenders_weightedMean.csv")
+
+plot.heatmap.df<-read_csv("../new_man_tables/LigandStrength_LIANA_TBvControl_SummarizeByEachSenders_V2.csv")
+head(average.ligand.strength)
+head(plot.heatmap.df)
+```
+
+```{r}
+chosen.ligands <- c(average.ligand.strength%>%ungroup()%>%slice_head(n=30)%>%pull(ligand.complex), average.ligand.strength%>%ungroup()%>%slice_tail(n=30)%>%pull(ligand.complex))
+plot.heatmap.df <- plot.heatmap.df %>% dplyr::filter(ligand.complex %in% chosen.ligands) %>% 
+  group_by(ligand.complex) %>%
+  dplyr::mutate(total_count = sum(count_FC), 
+                pos_count = sum( (log10_ligand_mean_FC > 0)*count_FC),
+                neg_count = sum( (log10_ligand_mean_FC < 0)*count_FC))
+ligands2plot<-plot.heatmap.df%>%filter(source=='Fibroblast|MMP1,CXCL5')%>%pull(ligand.complex)
+
+liana_both %>% filter(ligand.complex%in%ligands2plot)%>%filter(source=='Fibroblast|MMP1,CXCL5')%>% group_by(ligand.complex, target) %>% 
+    mutate(mean_TB_edge=mean(edge_weight_TB), mean_CTR_edge=mean(edge_weight_CTR), count_FC = n())%>%ungroup()%>%arrange(ligand.complex)%>%select(source,target,ligand.complex,mean_TB_edge, mean_CTR_edge,count_FC)%>% unique()%>%write.csv('../new_man_tables/Fig4_mmp1_cxcl5_fib_signaling.csv')
+
+liana_both %>% filter(ligand.complex%in%ligands2plot)%>%filter(source=='Fibroblast|MMP1,CXCL5')%>%write.csv('../new_man_tables/Fig4_mmp1_cxcl5_fib_signaling_unsummarized.csv')
+```
+
+```{r}
+liana_test<-readRDS('../datasets/new_liana_run_TB_only_t_combined_celltype.rds')
+ordered_groups<-c( 'Monocytes','DC','Inflammed_Monocytes','CD16_Monocytes','Low_complexity_Monocytes','Type1_IFN_Response_Monocytes', 'Macrophages|ARL4C,EMP1'  ,'Alveolar_Macrophages','Macrophages|Heatshock','Macrophages|LGMN,SEPP1','Macrophages|SPP1,CHI3L','Fibroblast|SERPINE2,COL1A1', 'Fibroblast|MMP1,CXCL5','Fibroblast|IL6,CCL2','Fibroblast|COMP,CILP','Fibroblast|HSP','Neutrophil|MMP9, CST7', 'Neutrophil|Heatshock', 'Neutrophil|GBP1,GBP5', 'AT1', 'AT2','Club cells', 'Endothelial', 'Plasma','B cell', 'Mast', 'NK',  'CD8 cytotoxic T', 'T')
+p<-liana_dotplot(liana_test,source_groups ='Fibroblast|MMP1,CXCL5',
+                target_groups = ordered_groups,
+                ntop = 20)+ theme(axis.text.x = element_text(angle = 45, size=10,  vjust = 1, hjust = 1))
+
+source_groups ='Fibroblast|MMP1,CXCL5'
+target_groups = ordered_groups
+specificity = "natmi.edge_specificity"
+magnitude = "sca.LRscore"
+y.label = "Interactions (Ligand -> Receptor)"
+size.label = "Interaction\nSpecificity"
+colour.label = "Expression\nMagnitude"
+
+entities <- c("ligand.complex", "receptor.complex")
+# ntop = 50
+ntop = 20
+# Modify for the plot
+liana_mod <- liana_test %>%
+   # only keep interactions concordant between methods
+  filter(aggregate_rank <= 0.01) %>% 
+    # Filter to only the cells of interest
+    `if`(!is.null(source_groups),
+         filter(., source %in% source_groups),
+         .) %>%
+    `if`(!is.null(target_groups),
+         filter(., target %in% target_groups),
+         .)
+if(!is.null(ntop)){
+        # Subset to the X top interactions
+        top_int <- liana_mod %>% distinct_at(entities) %>% head(ntop)
+        liana_mod %<>% inner_join(top_int, by=entities)
+    }
+liana_mod %<>%
+        rename(magnitude = !!magnitude) %>%
+        rename(specificity = !!specificity) %>%
+        unite(entities, col = "interaction", sep = " -> ") %>%
+        unite(c("source", "target"), col = "source_target", remove = FALSE)
+interactions_order <- liana_mod %>% pull("interaction") %>% unique()
+
+liana_mod %<>%
+        mutate(interaction = factor(interaction, levels=rev(interactions_order))) %>%
+        mutate(across(where(is.character), as.factor))
+cbPalette <- c("#E69F00", "#56B4E9",
+                   "#009E73", "#F0E442", "#0072B2",
+                   "#D55E00", "#CC79A7", "#DF69A7")
+size_range = c(2, 10)
+# Perform hierarchical clustering on the 'magnitude' variable
+magnitude_mat<-liana_mod[,c('target','interaction', 'magnitude')]%>%pivot_wider(id_cols=target, names_from = interaction, values_from = 'magnitude')%>%as.data.frame()
+rownames(magnitude_mat)<-magnitude_mat$target
+magnitude_mat<-magnitude_mat[,-c(1)]
+magnitude_mat[is.na(magnitude_mat)]<-0
+library(pheatmap)
+library(dendextend)
+library(ggtree)
+
+magnitude_dist_x <- cor(t(magnitude_mat)) # Create a distance matrix between targets
+correlation.heatmap <- pheatmap(magnitude_dist_x)
+magnitude_clust_x <-correlation.heatmap$tree_row
+
+magnitude_dist_y <- cor(magnitude_mat)
+correlation.heatmap <- pheatmap(magnitude_dist_y)
+magnitude_clust_y <- correlation.heatmap$tree_row
+# Reorder the data based on the clustering results
+liana_mod$target <- factor(liana_mod$target, levels = magnitude_clust_x$labels[magnitude_clust_x$order])
+liana_mod$interaction <- factor(liana_mod$interaction, levels = magnitude_clust_y$labels[magnitude_clust_y$order])
+
+    dotplot<-ggplot(liana_mod,
+               aes(x = target,
+                   y = interaction,
+                   colour = magnitude,
+                   size = specificity,
+                   group = target
+               )) +
+            geom_point() +
+            scale_color_gradientn(colours = viridis::viridis(20)) +
+            scale_size_continuous(range = size_range) +
+       scale_y_discrete(position = "right")+ #move the y label to the right
+            # scale_x_discrete(position = "right") +
+            labs(y = y.label,
+                 colour = colour.label,
+                 size = size.label,
+                 x = "Target",
+            ) +
+            theme_bw(base_size = 20) +
+          
+            theme(
+            # Hide default x and y axes
+             axis.text.x = element_text(colour =
+                                               cbPalette[1:length(
+                                                   unique(liana_mod$source)
+                                               )],
+                                           face = "bold",
+                                        angle=90,
+                                           size = 10,  vjust = 0.5, hjust=1),
+             axis.text.y = element_text(size = 10,
+                                           vjust = 0.5),
+            axis.title = element_blank(),
+            axis.ticks = element_blank(),
+            # Customize dendrogram appearance (adjust as needed)
+            panel.grid = element_blank(),
+            plot.margin = margin(20, 20, 20, 20),
+            # Customize dendrogram lines
+            panel.background = element_blank(), #remove panel background
+            panel.grid.major = element_line(size = 0.5, linetype = 'solid',
+                                colour = "#ECECEC"), 
+            panel.spacing = unit(0.1, "lines"),
+            legend.title = element_text(size = 10),
+            plot.title = element_text(vjust = 0, hjust=0.5, colour = "gray6"),
+            strip.text = element_text(size = 24, colour = "gray6")
+        )+
+    theme(text = element_text(family = "Helvetica"))
+    # Add dendrogram to the x-axis
+    ggtree_plot_col<- ggtree(magnitude_clust_x) +geom_tiplab(align=TRUE, linetype = 'solid', size=0)+ layout_dendrogram()
+    # ggtree_plot_col<-ggtree_plot_col+ xlim2(dotplot)
+    ggtree_plot <- ggtree(magnitude_clust_y)+geom_tiplab(align=TRUE, linetype = 'solid', size=0)
+
+    library(patchwork)
+
+    pdf('../new_man_figs/Fig4/fib_mmp1_cxcl5_subcluster_liana_TOP20_interaction_clustered_dotplot.pdf', 10, 8)
+    plot_spacer() + plot_spacer() + ggtree_plot_col +
+    plot_spacer() + plot_spacer() + plot_spacer() +
+    ggtree_plot + plot_spacer() + dotplot + 
+    plot_layout(ncol = 3, widths = c(0.7, -0.1, 4), heights = c(0.9, -0.1, 4))
+    dev.off()
+```
+
+
+# multinichenet 
+
+
+```{r}
+library(nichenetr)
+library(SingleCellExperiment)
+library(dplyr)
+library(ggplot2)
+library(multinichenetr)
+```
+```{r}
+organism = "human"
+if(organism == "human"){
+  # lr_network = readRDS(url("https://zenodo.org/record/7074291/files/lr_network_human_21122021.rds"))
+  lr_network = readRDS('nichenet_resources/lr_network_human_21122021.rds')
+  lr_network = lr_network %>% dplyr::rename(ligand = from, receptor = to) %>% distinct(ligand, receptor) %>% mutate(ligand = make.names(ligand), receptor = make.names(receptor))
+  # ligand_target_matrix = readRDS(url("https://zenodo.org/record/7074291/files/ligand_target_matrix_nsga2r_final.rds"))
+  ligand_target_matrix = readRDS('nichenet_resources/ligand_target_matrix_nsga2r_final.rds')
+  colnames(ligand_target_matrix) = colnames(ligand_target_matrix) %>% make.names()
+  rownames(ligand_target_matrix) = rownames(ligand_target_matrix) %>% make.names()
+} else if(organism == "mouse"){
+  lr_network = readRDS(url("https://zenodo.org/record/7074291/files/lr_network_mouse_21122021.rds"))
+  lr_network = lr_network %>% dplyr::rename(ligand = from, receptor = to) %>% distinct(ligand, receptor) %>% mutate(ligand = make.names(ligand), receptor = make.names(receptor))
+  ligand_target_matrix = readRDS(url("https://zenodo.org/record/7074291/files/ligand_target_matrix_nsga2r_final_mouse.rds"))
+  colnames(ligand_target_matrix) = colnames(ligand_target_matrix) %>% make.names()
+  rownames(ligand_target_matrix) = rownames(ligand_target_matrix) %>% make.names()
+}
+```
+
+# set up filtered final dataset
+
+```{r}
+library(Seurat)
+obj<-readRDS( '../datasets/lung_integrated_reannotated_09262023.rds')
+DefaultAssay(obj)<-'RNA'
+obj<-subset(obj, subset=cell.type.v4=="Proliferating", invert=T)
+obj$cell.type.v4<-factor(obj$cell.type.v4)
+sce = Seurat::as.SingleCellExperiment(obj, assay = "RNA")
+sce = alias_to_symbol_SCE(sce, "human") %>% makenames_SCE()
+```
+```{r}
+table(SummarizedExperiment::colData(sce)$cell.type.v4, SummarizedExperiment::colData(sce)$TB)
+```
+```{r}
+sample_id = "Patient"
+group_id = "TB"
+celltype_id = "cell.type.v4"
+covariates = NA
+batches = NA
+
+
+
+#make sure al the condition names are syntactically valid
+SummarizedExperiment::colData(sce)$Patient = SummarizedExperiment::colData(sce)$Patient %>% make.names()
+SummarizedExperiment::colData(sce)$TB = SummarizedExperiment::colData(sce)$TB %>% make.names()
+SummarizedExperiment::colData(sce)$cell.type.v4 = SummarizedExperiment::colData(sce)$cell.type.v4 %>% make.names()
+
+senders_oi = SummarizedExperiment::colData(sce)[,celltype_id] %>% unique()
+receivers_oi = SummarizedExperiment::colData(sce)[,celltype_id] %>% unique()
+
+min_cells = 3 #this is not ideal...
+abundance_expression_info = get_abundance_expression_info(sce = sce, sample_id = sample_id, group_id = group_id, celltype_id = celltype_id, min_cells = min_cells, senders_oi = senders_oi, receivers_oi = receivers_oi, lr_network = lr_network, batches = batches)
+```
+
+```{r}
+pdf('../new_man_figs/Fig4/cell_type_abundance_TB_status_by_sample.png' )
+print(abundance_expression_info$abund_plot_sample)
+dev.off()
+abundance_expression_info$abund_plot_sample
+```
+
+
+```{r}
+abundance_expression_info$abund_plot_group
+```
+
+```{r}
+pdf('../new_man_figs/Fig4/cell_type_abundance_TB_status_by_celltype.png' )
+print(abundance_expression_info$abund_plot_group)
+dev.off()
+```
+
+```{r}
+contrasts_oi = c("'Negative-PreviousTB','PreviousTB-Negative'")
+contrast_tbl = tibble(contrast = c("Negative-PreviousTB","PreviousTB-Negative"), group = c("Negative","PreviousTB"))
+```
+
+
+```{r}
+DE_info = get_DE_info(sce = sce, sample_id = sample_id, group_id = group_id, celltype_id = celltype_id, batches = batches, covariates = covariates, contrasts_oi = contrasts_oi, min_cells = min_cells)
+```
+
+
+# check DE results
+```{r}
+pdf('../new_man_figs/Fig4/multinichenet_TB_status_min3cell_pval_hist.pdf', 20, 8)
+print(DE_info$hist_pvals)
+dev.off()
+DE_info$hist_pvals
+```
+
+empirical P value
+
+```{r}
+empirical_pval = TRUE
+if(empirical_pval == TRUE){
+  DE_info_emp = get_empirical_pvals(DE_info$celltype_de$de_output_tidy)
+} 
+DE_info_emp$de_output_tidy_emp %>% arrange(p_emp) %>% head()
+```
+
+```{r}
+pdf('../new_man_figs/Fig4/multinichenet_TB_status_min3cell_emp_pval_hist.pdf', 20, 8)
+DE_info_emp$hist_pvals_emp
+dev.off()
+DE_info_emp$hist_pvals_emp
+```
+
+```{r}
+comparison_plots = compare_normal_emp_pvals(DE_info, DE_info_emp, adj_pval = FALSE)
+comparison_plots
+
+
+
+empirical_pval = TRUE
+if(empirical_pval == FALSE){
+  celltype_de = DE_info$celltype_de$de_output_tidy
+} else {
+  celltype_de = DE_info_emp$de_output_tidy_emp %>% dplyr::select(-p_val, -p_adj) %>% dplyr::rename(p_val = p_emp, p_adj = p_adj_emp)
+}
+
+
+
+sender_receiver_de = combine_sender_receiver_de(
+  sender_de = celltype_de,
+  receiver_de = celltype_de,
+  senders_oi = senders_oi,
+  receivers_oi = receivers_oi,
+  lr_network = lr_network
+)
+
+
+logFC_threshold = 0.50
+p_val_threshold = 0.05
+fraction_cutoff = 0.05
+# p_val_adj = TRUE 
+#This choice was made here because this dataset has only a few samples per group and we might have a lack of statistical power due to pseudobulking. 
+p_val_adj = FALSE 
+# top n of the predicted target genes will be considered (here: top 250 targets per ligand).
+top_n_target = 250
+
+verbose = TRUE
+cores_system = 6
+n.cores = min(cores_system, sender_receiver_de$receiver %>% unique() %>% length()) # use one core per receiver cell type
+```
+
+## Run the NicheNet ligand activity analysis
+```{r}
+ligand_activities_targets_DEgenes = suppressMessages(suppressWarnings(get_ligand_activities_targets_DEgenes(
+  receiver_de = celltype_de,
+  receivers_oi = receivers_oi,
+  ligand_target_matrix = ligand_target_matrix,
+  logFC_threshold = logFC_threshold,
+  p_val_threshold = p_val_threshold,
+  p_val_adj = p_val_adj,
+  top_n_target = top_n_target,
+  verbose = verbose, 
+  n.cores = n.cores
+)))
+
+ligand_activities_targets_DEgenes$ligand_activities %>% head(20)
+```
+```{r}
+prioritizing_weights_DE = c("de_ligand" = 1,
+                         "de_receptor" = 1)
+prioritizing_weights_activity = c("activity_scaled" = 2)
+
+prioritizing_weights_expression_specificity = c("exprs_ligand" = 2,
+                         "exprs_receptor" = 2)
+
+prioritizing_weights_expression_sufficiency = c("frac_exprs_ligand_receptor" = 1)
+
+prioritizing_weights_relative_abundance = c( "abund_sender" = 0,
+                         "abund_receiver" = 0)
+
+prioritizing_weights = c(prioritizing_weights_DE, 
+                         prioritizing_weights_activity, 
+                         prioritizing_weights_expression_specificity,
+                         prioritizing_weights_expression_sufficiency, 
+                         prioritizing_weights_relative_abundance)
+```
+
+```{r}
+sender_receiver_tbl = sender_receiver_de %>% dplyr::distinct(sender, receiver)
+
+metadata_combined = SummarizedExperiment::colData(sce) %>% tibble::as_tibble()
+
+if(!is.na(batches)){
+  grouping_tbl = metadata_combined[,c(sample_id, group_id, batches)] %>% tibble::as_tibble() %>% dplyr::distinct()
+  colnames(grouping_tbl) = c("sample","group",batches)
+} else {
+  grouping_tbl = metadata_combined[,c(sample_id, group_id)] %>% tibble::as_tibble() %>% dplyr::distinct()
+  colnames(grouping_tbl) = c("sample","group")
+}
+
+
+
+prioritization_tables = suppressMessages(generate_prioritization_tables(
+  sender_receiver_info = abundance_expression_info$sender_receiver_info,
+  sender_receiver_de = sender_receiver_de,
+  ligand_activities_targets_DEgenes = ligand_activities_targets_DEgenes,
+  contrast_tbl = contrast_tbl,
+  sender_receiver_tbl = sender_receiver_tbl,
+  grouping_tbl = grouping_tbl,
+  prioritizing_weights = prioritizing_weights,
+  fraction_cutoff = fraction_cutoff, 
+  abundance_data_receiver = abundance_expression_info$abundance_data_receiver,
+  abundance_data_sender = abundance_expression_info$abundance_data_sender
+))
+
+prioritization_tables$group_prioritization_tbl %>% head(20)
+```
+
+
+## Step 5: Add information on prior knowledge and expression correlation between LR and target expression.
+Look at whether expression of ligand-receptor across all samples is correlated with the expression of their by NicheNet predicted target genes. 
+```{r}
+lr_target_prior_cor = lr_target_prior_cor_inference(prioritization_tables$group_prioritization_tbl$receiver %>% unique(), abundance_expression_info, celltype_de, grouping_tbl, prioritization_tables, ligand_target_matrix, logFC_threshold = logFC_threshold, p_val_threshold = p_val_threshold, p_val_adj = p_val_adj)
+```
+
+Saving the outputs
+```{r}
+path = "./"
+
+multinichenet_output = list(
+    celltype_info = abundance_expression_info$celltype_info,
+    celltype_de = celltype_de,
+    sender_receiver_info = abundance_expression_info$sender_receiver_info,
+    sender_receiver_de =  sender_receiver_de,
+    ligand_activities_targets_DEgenes = ligand_activities_targets_DEgenes,
+    prioritization_tables = prioritization_tables,
+    grouping_tbl = grouping_tbl,
+    lr_target_prior_cor = lr_target_prior_cor
+  ) 
+multinichenet_output = make_lite_output(multinichenet_output)
+
+save = TRUE
+if(save == TRUE){
+  saveRDS(multinichenet_output, paste0(path, "celltype_v4_TB_status_multinichenet_output.rds"))
+
+}
+```
+
+
+# export prioritization table to make visualization with Josh's script
+
+```{r}
+prioritization_tables$group_prioritization_tbl
+```
+```{r}
+prioritization_tables$group_prioritization_tbl%>%write.csv('../new_man_tables/multinichenet_prioritization_table_231004.csv')
+```
+
+```{r}
+senders_receivers = union(multinichenet_output$prioritization_tables$group_prioritization_tbl$sender %>% unique(), multinichenet_output$prioritization_tables$group_prioritization_tbl$receiver %>% unique()) %>% sort()
+
+
+colors<-list("AT1" ="#9E0142",  "AT2"="#E55748", "Neutrophil"="#F6814C", "CD8.cytotoxic.T"="#FDB164", "DC"="#FDD884", 'Fibroblast'= "#F5FBAF", "Mast"="#DCF199", "Macrophage"="#AFDEA3", 'T'= "#4DA7B0", "Monocyte"="#3C7AB6", "Endothelial"="#5E4FA2")
+
+# plot for negative first
+prioritized_tbl_oi_Neg_20 = get_top_n_lr_pairs(multinichenet_output$prioritization_tables, 20, groups_oi = "Negative")
+senders_receivers = union(prioritized_tbl_oi_Neg_20$sender %>% unique(), prioritized_tbl_oi_Neg_20$receiver %>% unique()) %>% sort()
+
+colors_sender = colorRampPalette(RColorBrewer::brewer.pal(7,name = 'Spectral'))(length(senders_receivers)) %>% magrittr::set_names(senders_receivers)
+colors_receiver = colorRampPalette(RColorBrewer::brewer.pal(7,name = 'Spectral'))(length(senders_receivers)) %>% magrittr::set_names(senders_receivers)
+pdf('../new_man_figs/Fig4/multinichenet_TB_status_cell_type_v4_top20_LR_negative.pdf')
+circos_N = make_circos_one_group(prioritized_tbl_oi_Neg_20, colors_sender, colors_receiver)
+dev.off()
+
+
+prioritized_tbl_oi_TB_20 = get_top_n_lr_pairs(multinichenet_output$prioritization_tables, 20, groups_oi = "PreviousTB")
+senders_receivers = union(prioritized_tbl_oi_TB_20$sender %>% unique(), prioritized_tbl_oi_TB_20$receiver %>% unique()) %>% sort()
+
+colors_sender = colorRampPalette(RColorBrewer::brewer.pal(7,name = 'Spectral'))(length(senders_receivers)) %>% magrittr::set_names(senders_receivers)
+colors_receiver = colorRampPalette(RColorBrewer::brewer.pal(7,name = 'Spectral'))(length(senders_receivers)) %>% magrittr::set_names(senders_receivers)
+
+
+pdf('../new_man_figs/Fig4/multinichenet_TB_status_cell_type_v4_top20_LR_tb.pdf')
+circos_TB = make_circos_one_group(prioritized_tbl_oi_TB_20, colors_sender, colors_receiver)
+dev.off()
+
+```
+
+

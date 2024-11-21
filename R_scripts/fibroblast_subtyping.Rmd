@@ -1,0 +1,988 @@
+---
+title: "Fibroblast subtyping"
+output: html_notebook
+
+---
+
+```{r}
+library(ggplot2)
+library(tidyverse)
+library(dplyr)
+library(Seurat)
+```
+
+```{r}
+obj <- readRDS("~/Desktop/Shalek_Lab/Human_TB/datasets/subclustering_objects/sct_preprocessed_lung_Fibroblast.rds")
+obj
+```
+
+```{r}
+obj
+```
+
+```{r}
+p1<-DimPlot(obj)
+p2<-DimPlot(obj, group.by='Disease_Status')
+p3<-DimPlot(obj, group.by='Sequencing_Batch')
+p1+p2
+p3
+```
+# Cluster markers
+```{r}
+cluster.markers<-FindAllMarkers(obj, assay = 'RNA', only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+```
+```{r}
+cluster.markers %>%
+    group_by(cluster) %>%
+    slice_max(n = 5, order_by = avg_log2FC)
+```
+cluster 4 seems MMP high, cluster 5 might still have some mono.macro contam because LYZ and CD74
+
+```{r}
+FeaturePlot(obj, features=c('LYZ', 'CD74'))
+```
+```{r}
+cluster.markers %>%
+    group_by(cluster) %>%
+    top_n(n = 10, wt = avg_log2FC) -> top10
+DoHeatmap(obj, features = top10$gene) + NoLegend()
+```
+```{r}
+pdf('plots/subclustering/fibroblast_cluster_DE_top10.pdf', 12, 10)
+DoHeatmap(obj, features = top10$gene) + NoLegend()
+dev.off()
+```
+
+### look at some DE genes for cluster 3 in paper
+```{r}
+FeaturePlot(obj, features=c('PDPN','FAP'), )
+```
+```{r}
+FeaturePlot(obj, features=c('APOE', 'PLIN2'))
+```
+```{r}
+FeaturePlot(obj, c('ACTA2', 'LTBP2','COL5A2'))
+```
+fibroblast activation signature (ACTA2 is elevated in activated fibroblast)
+
+```{r}
+activation.sig.peyser<-c("Sparc",
+"Lgals1",
+"Serpinh1",
+"Tmsb10",
+"Col1a1",
+"Mgp",
+"Fn1",
+"Ppic",
+"Serpine2",
+"Fbn1",
+"Cald1",
+"Col5a2",
+"Fstl1",
+"Eln",
+"Tpm1",
+"Col4a2",
+"Timp1",
+"Col4a1",
+"Col6a3",
+"Igf1",
+"Actn1",
+"Mfap2",
+"Thbs1",
+"Ltbp2",
+"Col5a1",
+"Sfrp1",
+"Phldb2",
+"Tnfrsf12a",
+"Fkbp10",
+"Acta2",
+"Myh9",
+"Tagln",
+"Iigp1",
+"Tpm2",
+"Tnc",
+"Runx1",
+"Nrep",
+"Des",
+"Wisp1",
+"Nrcam",
+"Col12a1",
+"S100a4",
+"Fst",
+"Serpine1",
+"Spp1",
+"Postn",
+"Cthrc1",
+"Actg2",
+"Igfbp2")
+
+convertMouseGeneList <- function(x){
+require("biomaRt")
+human = useMart("ensembl", dataset = "hsapiens_gene_ensembl", host="https://dec2021.archive.ensembl.org")
+mouse = useMart("ensembl", dataset = "mmusculus_gene_ensembl",host="https://dec2021.archive.ensembl.org")
+genesV2 = getLDS(attributes = c("mgi_symbol"), filters = "mgi_symbol", values = x , mart = mouse, attributesL = c("hgnc_symbol"), martL = human, uniqueRows=T)
+humanx <- unique(genesV2[, 2])
+# Print the first 6 genes found to the screen
+print(head(humanx))
+return(humanx)
+}
+
+activation_human_markers<-convertMouseGeneList(activation.sig.peyser)
+```
+
+```{r}
+obj<-AddModuleScore(obj,features=activation_human_markers, name='fibroblast_activation' )
+FeaturePlot(obj, 'fibroblast_activation1')
+```
+
+
+
+# Look into literature subtypes
+
+# WGCNA
+```{r}
+library(WGCNA)
+library(cowplot)
+library(hdWGCNA)
+theme_set(theme_cowplot())
+set.seed(12345)
+```
+
+```{r}
+obj@assays$SCT@var.features
+```
+```{r}
+#set up
+seurat_obj <- SetupForWGCNA(
+  obj,
+  gene_select = "variable", # the gene selection approach
+  # fraction = 0.05, # fraction of cells that a gene needs to be expressed in order to be included
+  wgcna_name = "SCT_VariableFeatures" # the name of the hdWGCNA experiment
+)
+```
+
+```{r}
+# construct metacells  in each group
+seurat_obj <- MetacellsByGroups(
+  seurat_obj = seurat_obj,
+  group.by = c("SCT_snn_res.0.267", "Disease_Status"), # specify the columns in seurat_obj@meta.data to group by
+  reduction = 'umap', # select the dimensionality reduction to perform KNN on
+  k = 10, # nearest-neighbors parameter
+  max_shared = 5, # maximum number of shared cells between two metacells
+  ident.group = 'SCT_snn_res.0.267', # set the Idents of the metacell seurat object
+  min_cells = 20, 
+)
+
+# normalize metacell expression matrix:
+seurat_obj <- NormalizeMetacells(seurat_obj)
+```
+
+```{r}
+seurat_obj <- ScaleMetacells(seurat_obj, features=VariableFeatures(seurat_obj))
+seurat_obj <- RunPCAMetacells(seurat_obj, features=VariableFeatures(seurat_obj))
+seurat_obj <- RunHarmonyMetacells(seurat_obj, group.by.vars='Disease_Status')
+seurat_obj <- RunUMAPMetacells(seurat_obj, reduction='harmony', dims=1:15)
+
+
+p1 <- DimPlotMetacells(seurat_obj, group.by='SCT_snn_res.0.267') + umap_theme() + ggtitle("cluster")
+p2 <- DimPlotMetacells(seurat_obj, group.by='Disease_Status') + umap_theme() + ggtitle("Disease_Status")
+
+p1 | p2
+```
+
+```{r}
+p1+p2
+```
+```{r}
+seurat_obj <- SetDatExpr(
+  seurat_obj,
+  assay = 'SCT', # using RNA assay
+  slot = 'data' # using normalized data
+)
+```
+```{r}
+# Test different soft powers:
+seurat_obj <- TestSoftPowers(
+  seurat_obj,
+  networkType = 'signed' # you can also use "unsigned" or "signed hybrid"
+)
+
+# plot the results:
+plot_list <- PlotSoftPowers(seurat_obj)
+library(patchwork)
+# assemble with patchwork
+wrap_plots(plot_list, ncol=2)
+
+```
+```{r}
+# construct co-expression network:
+seurat_obj <- ConstructNetwork(
+  seurat_obj, soft_power=6,
+  setDatExpr=FALSE,
+  tom_name = 'all_fibroblasts' # name of the topoligical overlap matrix written to disk
+)
+```
+```{r}
+PlotDendrogram(seurat_obj, main='hdWGCNA Dendrogram for all fibroblasts')
+```
+```{r}
+pdf('plots/subclustering/hgWGCNA/fibroblast_dendrogram.pdf')
+PlotDendrogram(seurat_obj, main='hdWGCNA Dendrogram for all fibroblasts')
+dev.off()
+```
+
+
+```{r}
+# need to run ScaleData first or else harmony throws an error:
+# seurat_obj <- ScaleData(seurat_obj, features=VariableFeatures(seurat_obj))
+
+# compute all MEs in the full single-cell dataset
+seurat_obj <- ModuleEigengenes(
+ seurat_obj,
+ # group.by.vars="Sample" # no harmonization
+)
+```
+
+```{r}
+# module eigengenes:
+MEs <- GetMEs(seurat_obj, harmonized=FALSE)
+head(MEs)
+```
+
+```{r}
+# compute eigengene-based connectivity (kME):
+seurat_obj <- ModuleConnectivity(
+  seurat_obj,
+  # group.by = 'cell_type', group_name = 'INH'
+)
+```
+
+```{r}
+# rename the modules
+seurat_obj <- ResetModuleNames(
+  seurat_obj,
+  new_name = "Fibroblast-M"
+)
+
+# plot genes ranked by kME for each module
+p <- PlotKMEs(seurat_obj, n_hubs=25,ncol=5)
+
+p
+```
+```{r}
+pdf('plots/subclustering/hgWGCNA/fibroblast_PlotKMEs.pdf', 20, 12)
+p
+dev.off()
+```
+
+```{r}
+# get the module assignment table:
+modules <- GetModules(seurat_obj)
+
+# show the first 6 columns:
+head(modules[,1:6])
+```
+```{r}
+# get hub genes: A table of the top N hub genes sorted by kME
+hub_df <- GetHubGenes(seurat_obj, n_hubs = 10)
+
+head(hub_df)
+```
+
+#save object 
+```{r}
+saveRDS(seurat_obj, file='../datasets/subclustering_objects/fibroblast_hdWGCNA_object.rds')
+```
+
+
+```{r}
+# compute gene scoring for the top 25 hub genes by kME for each module
+
+
+# compute gene scoring for the top 25 hub genes by kME for each module
+# with UCell method
+library(UCell)
+seurat_obj <- ModuleExprScore(
+  seurat_obj,
+  n_genes = 25,
+  method='UCell'
+)
+```
+```{r}
+# make a featureplot of hMEs for each module
+plot_list <- ModuleFeaturePlot(
+  seurat_obj,
+  features='MEs', # plot the MEs (module eigengenes)
+  order=TRUE # order so the points with highest hMEs are on top
+)
+
+# stitch together with patchwork
+wrap_plots(plot_list, ncol=3)
+```
+```{r}
+pdf('plots/subclustering/hgWGCNA/fibroblast_MEs_featureplot.pdf')
+wrap_plots(plot_list, ncol=3)
+dev.off()
+```
+
+```{r}
+# make a featureplot of hub scores for each module
+plot_list <- ModuleFeaturePlot(
+  seurat_obj,
+  features='scores', # plot the hub gene scores
+  order='shuffle', # order so cells are shuffled
+  ucell = TRUE # depending on Seurat vs UCell for gene scoring
+)
+
+# stitch together with patchwork
+wrap_plots(plot_list, ncol=3)
+
+```
+```{r}
+pdf('plots/subclustering/hgWGCNA/fibroblast_UCell_score_featureplot.pdf')
+wrap_plots(plot_list, ncol=3)
+dev.off()
+```
+```{r}
+
+# with Seurat method
+seurat_obj <- ModuleExprScore(
+  seurat_obj,
+  n_genes = 25,
+  method='Seurat'
+)
+plot_list <- ModuleFeaturePlot(
+  seurat_obj,
+  features='scores', # plot the hub gene scores
+  order='shuffle', # order so cells are shuffled
+  ucell = FALSE # depending on Seurat vs UCell for gene scoring
+)
+
+# stitch together with patchwork
+wrap_plots(plot_list, ncol=3)
+```
+```{r}
+pdf('plots/subclustering/hgWGCNA/fibroblast_Seurat_score_featureplot.pdf')
+wrap_plots(plot_list, ncol=3)
+dev.off()
+```
+
+```{r}
+ModuleCorrelogram(seurat_obj) #M1 is very specific to that cluster we are interested in 
+```
+Visualize module by clusters
+```{r}
+# get MEs from seurat object
+MEs <- GetMEs(seurat_obj, harmonized=FALSE)
+mods <- colnames(MEs)
+mods <- mods[mods != 'grey']
+
+# add MEs to Seurat meta-data:
+seurat_obj@meta.data <- cbind(seurat_obj@meta.data, MEs)
+```
+
+
+```{r}
+# plot with Seurat's DotPlot function
+p <- DotPlot(seurat_obj, features=mods)
+
+# flip the x/y axes, rotate the axis labels, and change color scheme:
+p <- p +
+  coord_flip() +
+  RotatedAxis() +
+  scale_color_gradient2(high='red', mid='grey95', low='blue')
+
+# plot output
+p
+```
+```{r}
+pdf('plots/subclustering/hgWGCNA/fibroblast_MEs_by_cluster.pdf')
+print(p)
+```
+
+
+```{r}
+# Plot INH-M4 hME using Seurat VlnPlot function
+p <- VlnPlot(
+  seurat_obj,
+  features = 'Fibroblast-M1',
+  pt.size = 0 # don't show actual data points
+)
+
+# add box-and-whisker plots on top:
+p <- p + geom_boxplot(width=.25, fill='white')
+
+# change axis labels and remove legend:
+p <- p + xlab('') + ylab('hME') + NoLegend()
+
+# plot output
+p
+```
+
+
+# Try map the HLCA AND human lung TB fibroblasts to external signatures
+
+```{r}
+# convert h5ad to seurat
+
+library(anndata)
+library(Seurat)
+data <- read_h5ad("../datasets/concat_TB_HLCA_core_raw_fibroblasts.h5ad")
+counts<-t(as.matrix(data$X))
+rownames(counts)<-data$var[rownames(counts), 'gene_names']
+data <- CreateSeuratObject(counts = counts)
+meta<-read.csv('../datasets/concat_TB_HLCA_core_fibroblasts_meta.csv',row.names=1)
+data<-AddMetaData(data, meta)
+saveRDS(data, '../datasets/concat_TB_HLCA_core_raw_fibroblasts.rds')
+```
+
+## I want to  only focus on fibroblasts from lung in the HLCA 
+```{r}
+# load in both objects and combine them
+obj<-readRDS("~/Desktop/Shalek_Lab/Human_TB/datasets/subclustering_objects/sct_preprocessed_lung_Fibroblast.rds")
+DefaultAssay(obj)<-'RNA'
+data<-readRDS('../datasets/concat_TB_HLCA_core_raw.rds')
+data@meta.data[data@meta.data$Patient=="", 'Patient']<-hlca_meta[rownames(data@meta.data[data@meta.data$Patient=="", ]), 'donor_id']
+data@meta.data$tissue<-'lung parenchyma'
+data@meta.data[data@meta.data$ref_or_query=="True", 'tissue']<-hlca_meta[rownames(data@meta.data[data@meta.data$ref_or_query=="True", ]), 'tissue']
+data<-subset(data, subset=tissue=='lung parenchyma')
+data
+```
+
+
+# annotate HLCA lung + Human TB lung fibroblasts with lung fibroblast markers defined in 
+
+
+```{r}
+source("/Users/nl646/Desktop/Shalek_Lab/MuOrg_Pilots_8.2021/1_Preprocess/Build_Obj_BEM_v1.1.R")
+res_min = 0.2
+res_max = 1
+data = GenClustObj(data, sample_name ='HLCA_TB_Lung_Fibroblasts',  res_min = res_min, res_max = res_max, cluster_assay = "SCT", figdir = 'plots/subclustering')
+
+```
+```{r}
+data <- RunUMAP(data, dims = data@misc$nPCs)
+```
+```{r}
+p1<-DimPlot(data)
+p2<-DimPlot(data, group.by = 'Disease_Status')
+p3<-DimPlot(data, group.by = 'ref_or_query')
+p4<-DimPlot(data, group.by='ann_level_3_LT')
+
+```
+
+```{r}
+pdf('plots/subclustering/HLCA_lung_TB_fibroblasts_SCT_clustering.pdf')
+print(p1)
+print(p2)
+print(p3)
+print(p4)
+dev.off()
+```
+
+```{r}
+library(readxl)
+markers.travaglini<-read_excel('../datasets/travaglini_etal_cluster_markers.xlsx', sheet='Cluster 27', skip=1)
+head(markers.travaglini)
+```
+```{r}
+myofibroblast.markers<-markers.travaglini%>%top_n(20, wt=avg_logFC)%>%pull(Gene)
+```
+
+```{r}
+markers.travaglini<-read_excel('../datasets/travaglini_etal_cluster_markers.xlsx', sheet='Cluster 28', skip=1)
+fibromyocyte.markers<-markers.travaglini%>%filter(avg_logFC>0.5)%>%top_n(20, wt=avg_logFC)%>%pull(Gene)
+```
+
+```{r}
+markers.travaglini<-read_excel('../datasets/travaglini_etal_cluster_markers.xlsx', sheet='Cluster 29', skip=1)
+adv.fib.markers<-markers.travaglini%>%filter(avg_logFC>0.5)%>%top_n(20, wt=avg_logFC)%>%pull(Gene)
+```
+
+```{r}
+markers.travaglini<-read_excel('../datasets/travaglini_etal_cluster_markers.xlsx', sheet='Cluster 30', skip=1)
+alv.fib.markers<-markers.travaglini%>%filter(avg_logFC>0.5)%>%top_n(20, wt=avg_logFC)%>%pull(Gene)
+```
+
+```{r}
+markers.travaglini<-read_excel('../datasets/travaglini_etal_cluster_markers.xlsx', sheet='Cluster 31', skip=1)
+lipo.fib.markers<-markers.travaglini%>%filter(avg_logFC>0.5)%>%top_n(20, wt=avg_logFC)%>%pull(Gene)
+```
+
+```{r}
+markers.travaglini<-read_excel('../datasets/travaglini_etal_cluster_markers.xlsx', sheet='Cluster 32', skip=1)
+pericyte.markers<-markers.travaglini%>%filter(avg_logFC>0.5)%>%top_n(20, wt=avg_logFC)%>%pull(Gene)
+```
+
+```{r}
+markers.travaglini<-read_excel('../datasets/travaglini_etal_cluster_markers.xlsx', sheet='Cluster 33', skip=1)
+mesothelial.markers<-markers.travaglini%>%filter(avg_logFC>0.5)%>%top_n(20, wt=avg_logFC)%>%pull(Gene)
+```
+
+```{r}
+markers.travaglini<-read_excel('../datasets/travaglini_etal_cluster_markers.xlsx', sheet='Cluster 25', skip=1)
+ASM.markers<-markers.travaglini%>%filter(avg_logFC>0.5)%>%top_n(20, wt=avg_logFC)%>%pull(Gene)
+
+markers.travaglini<-read_excel('../datasets/travaglini_etal_cluster_markers.xlsx', sheet='Cluster 26', skip=1)
+VSM.markers<-markers.travaglini%>%filter(avg_logFC>0.5)%>%top_n(20, wt=avg_logFC)%>%pull(Gene)
+```
+
+```{r}
+marker_list<-list('myofibroblast.markers'=myofibroblast.markers, 'fibromyocyte.markers'=fibromyocyte.markers,
+                  'adv.fib.markers'=adv.fib.markers,'alv.fib.markers'=alv.fib.markers,'lipo.fib.markers'=lipo.fib.markers, 
+                  'pericyte.markers'=pericyte.markers,'mesothelial.markers'=mesothelial.markers,'ASM.markers'=ASM.markers,
+                  'VSM.markers'=VSM.markers)
+```
+
+make some module scores
+```{r}
+pdf('plots/subclustering/HLCA_lung_TB_SCT_travaglini_fib_marker_featPlots.pdf')
+for (module in names(marker_list)){
+  data<-AddModuleScore(data,assay='RNA',features=marker_list[module], name=module )
+  print(FeaturePlot(data, paste0(module, '1')))
+}
+dev.off()
+```
+
+```{r}
+VlnPlot(data, paste0(names(marker_list), '1'), group.by = 'ref_or_query', y.max=2.5)+stat_compare_means(comparisons=list(c('False', 'True')))
+```
+```{r}
+
+vp_case1 <- function(gene_signature, file_name, test_sign, y_max){
+plot_case1 <- function(signature){
+    VlnPlot(data, features = signature,
+            pt.size = 0.1, 
+            group.by = "ref_or_query", 
+            y.max = y_max, # add the y-axis maximum value - otherwise p-value hidden
+    ) + stat_compare_means(comparisons = test_sign, label = "p.signif")
+  }
+  map(gene_signature, plot_case1) %>% cowplot::plot_grid(plotlist = .)
+  file_name <- paste0(file_name, ".pdf")
+  ggsave(file_name, width = 14, height = 8)
+}
+
+vp_case2 <- function(gene_signature, file_name, test_sign, y_max){
+plot_case1 <- function(signature){
+    VlnPlot(data, features = signature,
+            pt.size = 0.1, 
+            group.by = "ref_or_query", 
+            y.max = y_max, # add the y-axis maximum value - otherwise p-value hidden
+    ) + stat_compare_means(comparisons = test_sign)
+  }
+  map(gene_signature, plot_case1) %>% cowplot::plot_grid(plotlist = .)
+  file_name <- paste0(file_name, ".pdf")
+  ggsave(file_name, width = 14, height = 8)
+}
+
+comparisons<-list(c('False', 'True'))
+vp_case1(gene_signature=paste0(names(marker_list), '1'), file_name = 'plots/subclustering/HLCA_lung_TB_SCT_travaglini_fib_marker_Vlnplots', test_sign=comparisons, y_max=2.5)
+
+vp_case2(gene_signature=paste0(names(marker_list), '1'), file_name = 'plots/subclustering/HLCA_lung_TB_SCT_travaglini_fib_marker_Vlnplots_wilcox', test_sign=comparisons, y_max=2.5)
+```
+save scored object
+```{r}
+saveRDS(data, '../datasets/HLCA_TB_Lung_Fibroblasts_SCT_230814.rds')
+
+```
+
+```{r}
+data<-readRDS('../datasets/HLCA_TB_Lung_Fibroblasts_SCT_230814.rds')
+
+
+library(ggpubr)
+
+vp_case1 <- function(gene_signature, file_name, test_sign, y_max){
+plot_case1 <- function(signature){
+    VlnPlot(data, features = signature,
+            pt.size = 0.1, 
+            group.by = "TB_status", 
+            y.max = y_max, # add the y-axis maximum value - otherwise p-value hidden
+    ) + stat_compare_means(comparisons = test_sign, label = "p.signif")
+  }
+  map(gene_signature, plot_case1) %>% cowplot::plot_grid(plotlist = .)
+  file_name <- paste0(file_name, ".pdf")
+  ggsave(file_name, width = 14, height = 8)
+}
+
+vp_case2 <- function(gene_signature, file_name, test_sign, y_max){
+plot_case1 <- function(signature){
+    VlnPlot(data, features = signature,
+            pt.size = 0.1, 
+            group.by = "TB_status", 
+            y.max = y_max, # add the y-axis maximum value - otherwise p-value hidden
+    ) + stat_compare_means(comparisons = test_sign)
+  }
+  map(gene_signature, plot_case1) %>% cowplot::plot_grid(plotlist = .)
+  file_name <- paste0(file_name, ".pdf")
+  ggsave(file_name, width = 14, height = 8)
+}
+
+comparisons<-list(c('Negative', 'PreviousTB'))
+vp_case1(gene_signature=paste0(names(marker_list), '1'), file_name = 'plots/subclustering/HLCA_lung_TB_SCT_travaglini_fib_marker_Vlnplots_TB_status', test_sign=comparisons, y_max=2.5)
+
+vp_case2(gene_signature=paste0(names(marker_list), '1'), file_name = 'plots/subclustering/HLCA_lung_TB_SCT_travaglini_fib_marker_Vlnplots_TB_status_wilcox', test_sign=comparisons, y_max=2.5)
+```
+
+## Try to call fibroblast subtypes based on these scores
+
+```{r}
+data<-readRDS('../datasets/HLCA_TB_Lung_Fibroblasts_SCT_230814.rds')
+```
+
+```{r}
+# scale the scores ? following the cell cycle assignment approach by seurta rn 
+
+fib.marker.columns <- grep(pattern = 'markers', x = colnames(x = data[[]]), value = TRUE)
+fib.scores <- data[[fib.marker.columns]]
+assignments <- apply(
+  X = fib.scores,
+  MARGIN = 1,
+  FUN = function(scores, subtypes=gsub('.markers', '', names(marker_list)), null = 'ambiguous') {
+    if (all(scores < 0)) {
+      return(null)
+    } else {
+      if (length(which(x = scores == max(scores))) > 1) {
+        return('Undecided')
+      } else {
+        return(subtypes[which(x = scores == max(scores))])
+      }
+    }
+  }
+)
+assignments<-as.data.frame(assignments)
+colnames(x = assignments) <- c('Travaglini.fib.subtype')
+rownames(x = assignments) <- colnames(data)
+data[[colnames(x = assignments)]] <- assignments
+
+DimPlot(data, group.by='Travaglini.fib.subtype')
+```
+
+```{r}
+p1<-DimPlot(data, group.by='Travaglini.fib.subtype')
+p2<-DimPlot(data, group.by='ref_or_query')
+p3<-DimPlot(data, group.by='Disease_Status')
+p4<-DimPlot(data, group.by='TB_status')
+pdf('plots/subclustering/HLCA_lung_TB_travaglini_subtypes_umap.pdf')
+print(p1)
+print(p2)
+print(p3)
+print(p4)
+dev.off()
+```
+
+## compare abundance 
+```{r}
+data@meta.data['Disease_Status_combined']<-'Control'
+data@meta.data[data@meta.data$TB_status=="PreviousTB", 'Disease_Status_combined']<-data@meta.data[data@meta.data$TB_status=="PreviousTB", 'Disease_Status']
+```
+
+
+```{r}
+library(ggpubr)
+data@meta.data%>% 
+    with(prop.table(table(Travaglini.fib.subtype, TB_status), 2)) %>% 
+    data.table() %>% 
+    dplyr::mutate(TB_status = factor(TB_status, c('Negative','PreviousTB'))) %>% ggplot(aes(fill = Travaglini.fib.subtype, y=N, x = TB_status)) + 
+  geom_bar(position = "fill", stat = "identity") + theme_classic() + 
+  scale_y_continuous(expand = c(0,0), breaks = c(0, 0.5,1)) + 
+  scale_fill_manual(values = c("#faaa5e",'#f5cdaf', "#ca5e4a", "#4e88b9",'#90a479', "#4e4ca0",'#9698dc', "#ad2524", "#abcfff", "#dd775a")) + 
+  ylab("subtype proportion") + xlab("TB Status") 
+```
+```{r}
+data@meta.data%>% 
+    with(prop.table(table(Travaglini.fib.subtype, Disease_Status_combined), 2)) %>% 
+    data.table() %>% 
+    dplyr::mutate(Disease_Status_combined = factor(Disease_Status_combined, c('Control','HIVTB', 'TB'))) %>% ggplot(aes(fill = Travaglini.fib.subtype, y=N, x = Disease_Status_combined)) + 
+  geom_bar(position = "fill", stat = "identity") + theme_classic() + 
+  scale_y_continuous(expand = c(0,0), breaks = c(0, 0.5,1)) + 
+  scale_fill_manual(values = c("#faaa5e",'#f5cdaf', "#ca5e4a", "#4e88b9",'#90a479', "#4e4ca0",'#9698dc', "#ad2524", "#abcfff", "#dd775a")) + 
+  ylab("subtype proportion") + xlab("TB Status") 
+```
+```{r}
+pdf('plots/subclustering/HLCA_lung_TB_Travaglini_subtype_abundance_barplots.pdf', 10, 8)
+data@meta.data%>% 
+    with(prop.table(table(Travaglini.fib.subtype, TB_status), 2)) %>% 
+    data.table() %>% 
+    dplyr::mutate(TB_status = factor(TB_status, c('Negative','PreviousTB'))) %>% ggplot(aes(fill = Travaglini.fib.subtype, y=N, x = TB_status)) + 
+  geom_bar(position = "fill", stat = "identity") + theme_classic() + 
+  scale_y_continuous(expand = c(0,0), breaks = c(0, 0.5,1)) + 
+  scale_fill_manual(values = c("#faaa5e",'#f5cdaf', "#ca5e4a", "#4e88b9",'#90a479', "#4e4ca0",'#9698dc', "#ad2524", "#abcfff", "#dd775a")) + 
+  ylab("subtype proportion") + xlab("TB Status") 
+
+data@meta.data%>% 
+    with(prop.table(table(Travaglini.fib.subtype, Disease_Status_combined), 2)) %>% 
+    data.table() %>% 
+    dplyr::mutate(Disease_Status_combined = factor(Disease_Status_combined, c('Control','HIVTB', 'TB'))) %>% ggplot(aes(fill = Travaglini.fib.subtype, y=N, x = Disease_Status_combined)) + 
+  geom_bar(position = "fill", stat = "identity") + theme_classic() + 
+  scale_y_continuous(expand = c(0,0), breaks = c(0, 0.5,1)) + 
+  scale_fill_manual(values = c("#faaa5e",'#f5cdaf', "#ca5e4a", "#4e88b9",'#90a479', "#4e4ca0",'#9698dc', "#ad2524", "#abcfff", "#dd775a")) + 
+  ylab("subtype proportion") + xlab("TB Status")
+dev.off()
+```
+
+```{r}
+fig.size(40, 30)
+data@meta.data%>% 
+    with(prop.table(table(Travaglini.fib.subtype, Patient), 2)) %>% 
+    data.table() %>% 
+    left_join(unique(dplyr::select(data@meta.data, Patient, TB_status)), by='Patient') %>% 
+    dplyr::mutate(TB_status = factor(TB_status, c('Negative','PreviousTB'))) %>%
+    ggplot(aes(TB_status, 100 * N, color = TB_status)) +
+        geom_violin(fill = NA) +
+        ylim(-10, 90)+
+        stat_compare_means(size = 5, label.y = 90)+
+        geom_smooth(method = 'lm', data = . %>% dplyr::mutate(TB_status = as.integer(TB_status)), color='black', alpha=.2) +
+        geom_jitter(width = .1, height = 0) +
+        facet_wrap(~Travaglini.fib.subtype, scales='free_y') +
+        labs(y = 'subtype Frequency') +
+        scale_color_tableau()
+```
+```{r}
+fig.size(40, 30)
+my_comparisons <- list( c("Control", "HIVTB"), c("Control", "TB") )
+base_plot<-data@meta.data%>% 
+    with(prop.table(table(Travaglini.fib.subtype, Patient), 2)) %>% 
+    data.table() %>% 
+    left_join(unique(dplyr::select(data@meta.data, Patient, Disease_Status_combined)), by='Patient') %>% 
+    dplyr::mutate(Disease_Status_combined = factor(Disease_Status_combined, c('Control','HIVTB', 'TB'))) %>%
+    ggplot(aes(Disease_Status_combined, 100 * N, color = Disease_Status_combined)) +
+        geom_violin(fill = NA) +
+        ylim(-10, 150)+
+        geom_smooth(method = 'lm', data = . %>% dplyr::mutate(Disease_Status_combined = as.integer(Disease_Status_combined)), color='black', alpha=.2) +
+        geom_jitter(width = .1, height = 0) +
+        facet_wrap(~Travaglini.fib.subtype, scales='free_y') +
+        labs(y = 'subtype Frequency') +
+        scale_color_tableau()
+
+base_plot2<-data@meta.data%>% 
+    with(prop.table(table(Travaglini.fib.subtype, Patient), 2)) %>% 
+    data.table() %>% 
+    left_join(unique(dplyr::select(data@meta.data, Patient, TB_status)), by='Patient') %>% 
+    dplyr::mutate(TB_status = factor(TB_status, c('Negative','PreviousTB'))) %>%
+    ggplot(aes(TB_status, 100 * N, color = TB_status)) +
+        geom_violin(fill = NA) +
+        ylim(-10, 150)+
+        geom_smooth(method = 'lm', data = . %>% dplyr::mutate(TB_status = as.integer(TB_status)), color='black', alpha=.2) +
+        geom_jitter(width = .1, height = 0) +
+        facet_wrap(~Travaglini.fib.subtype, scales='free_y') +
+        labs(y = 'subtype Frequency') +
+        scale_color_tableau()
+
+pdf('plots/subclustering/HLCA_lung_TB_disease_status_Travaglini_subtype_abundance_testing.pdf', 20,20)
+print(base_plot+ stat_compare_means(comparisons=my_comparisons,method = "t.test", label = "p.signif")+ggtitle('T test result'))
+print(base_plot+stat_compare_means(comparisons=my_comparisons,method = "t.test")+ggtitle('T test result'))
+# wilcoxon
+print(base_plot+ stat_compare_means(comparisons=my_comparisons,label = "p.signif")+ggtitle('Wilcoxon test result'))
+print(base_plot+stat_compare_means(comparisons=my_comparisons)+ggtitle('Wilcoxon test result'))
+# two group comparison between previous TB and controls
+print(base_plot2+ stat_compare_means(method = "t.test", label = "p.signif")+ggtitle('T test result'))
+print(base_plot2+stat_compare_means(method = "t.test")+ggtitle('T test result'))
+# wilcoxon
+print(base_plot2+ stat_compare_means(label = "p.signif")+ggtitle('Wilcoxon test result'))
+print(base_plot2+stat_compare_means()+ggtitle('Wilcoxon test result'))
+dev.off()
+
+```
+
+save analyzed data
+```{r}
+saveRDS(data, '../datasets/HLCA_TB_Lung_Fibroblasts_SCT_230814.rds')
+```
+
+```{r}
+#count of the subtype in human TB 
+data@meta.data
+```
+## check the myofibroblast markers in featureplots see what drives that cluster being called myofibroblast
+
+```{r}
+data<-readRDS('../datasets/HLCA_TB_Lung_Fibroblasts_SCT_230814.rds')
+```
+
+
+```{r}
+pdf('plots/subclustering/fib_travaglini_myofib_top20_featPlots.pdf', 20, 12)
+FeaturePlot(data, features=myofibroblast.markers)
+dev.off()
+```
+```{r}
+FeaturePlot(data, features=myofibroblast.markers)
+```
+```{r}
+epithelial.markers<-c('EPCAM','CDH1')
+AT1<-c('AGER','HOPX') #AGER is also myofib
+AT2<-c('SFTPC', 'SLC34A2', 'ABCA3')
+proximal.lung.epithelial<-c('SOX2', 'PAX9', 'TP63', 'KRT5', 'KRT14', 'MUC5B', 'SCGB1A1' )
+```
+
+```{r}
+DefaultAssay(data)<-'RNA'
+p1<-FeaturePlot(data, features=epithelial.markers )
+p2<-FeaturePlot(data, features=AT1 )
+p3<-FeaturePlot(data, features=AT2 )
+p4<-FeaturePlot(data, features=proximal.lung.epithelial )
+p1
+p2
+p3
+p4
+```
+
+
+
+# Go back to our own Fibroblast plot to visualize subtype
+
+```{r}
+obj<-readRDS("~/Desktop/Shalek_Lab/Human_TB/datasets/subclustering_objects/sct_preprocessed_lung_Fibroblast.rds")
+```
+
+```{r}
+obj
+```
+```{r}
+fib_subtype_df<-data.frame(data@meta.data[colnames(obj), c('Travaglini.fib.subtype',colnames(data@meta.data)[grep('markers1', colnames(data@meta.data))])])
+colnames(fib_subtype_df)<-c('Travaglini.fib.subtype',colnames(data@meta.data)[grep('markers1', colnames(data@meta.data))])
+rownames(fib_subtype_df)<-colnames(obj)
+obj<-AddMetaData(obj, fib_subtype_df)
+p1<-DimPlot(obj)
+p2<-DimPlot(obj, group.by='Travaglini.fib.subtype')
+p1+p2
+```
+```{r}
+p<-obj@meta.data %>% 
+    with(prop.table(table(Travaglini.fib.subtype, SCT_snn_res.0.267), 2)) %>% 
+    data.table() %>% 
+    dplyr::mutate(SCT_snn_res.0.267 = factor(SCT_snn_res.0.267, c(0, 1, 2, 3, 4, 5))) %>% ggplot(aes(fill = Travaglini.fib.subtype, y=N, x = SCT_snn_res.0.267)) + 
+  geom_bar(position = "fill", stat = "identity") + theme_classic() + 
+  scale_y_continuous(expand = c(0,0), breaks = c(0,0.5, 1)) + 
+  scale_fill_manual(values = c("#faaa5e",'#f5cdaf', "#ca5e4a", "#4e88b9", "#6ca659", "#4e4ca0",'#9698dc', "#ad2524", "#abcfff")) + 
+  ylab("Travaglini stromal subtype proportion") + xlab("Louvain cluster")
+pdf('plots/subclustering/Fibroblast_travaglini_cluster_abundance_barplot.pdf', 8,6)
+print(p)
+dev.off()
+p
+```
+```{r}
+saveRDS(obj,"~/Desktop/Shalek_Lab/Human_TB/datasets/subclustering_objects/sct_preprocessed_lung_Fibroblast.rds")
+```
+
+```{r}
+obj<-readRDS("~/Desktop/Shalek_Lab/Human_TB/datasets/subclustering_objects/sct_integrated_lung_Fibroblast.rds")
+
+cluster.markers<-FindAllMarkers(obj, assay = 'RNA', only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+cluster.markers %>% filter(p_val_adj<0.01)%>%
+    group_by(cluster) %>%
+    slice_max(n = 5, order_by = avg_log2FC)
+```
+### rename clusters by markers
+```{r}
+DimPlot(obj)
+DimPlot(obj, group.by='seurat_clusters')
+```
+```{r}
+FeaturePlot(obj, c('LYZ', 'S100A9'))
+```
+
+```{r}
+#COMP and CLIP might inhibit TGF-beta pathway
+new_names <- c("Fibroblast|IL6,CCL2", "Fibroblast|SERPINE2,COL1A1", "Fibroblast|HSP", "Fibroblast|COMP,CILP", "Fibroblast|MMP1,CXCL5", 'Fibroblast/MonoMac Doublets')
+names(new_names) <- levels(obj)
+
+obj <- RenameIdents(object = obj, new_names)
+obj$cell.type.v3<-Idents(obj)
+saveRDS(obj,"~/Desktop/Shalek_Lab/Human_TB/datasets/subclustering_objects/sct_integrated_lung_Fibroblast.rds")
+```
+
+
+## check epithelial markers in our fibroblast cells
+
+
+```{r}
+obj<-readRDS("~/Desktop/Shalek_Lab/Human_TB/datasets/subclustering_objects/sct_preprocessed_lung_Fibroblast.rds")
+DefaultAssay(obj)<-'RNA'
+p1<-FeaturePlot(obj, features=epithelial.markers )
+p2<-FeaturePlot(obj, features=AT1 )
+p3<-FeaturePlot(obj, features=AT2 )
+p4<-FeaturePlot(obj, features=proximal.lung.epithelial )
+p1
+p2
+p3
+p4
+```
+
+# remake UMAP without doublets
+
+```{r}
+obj<-readRDS("~/Desktop/Shalek_Lab/Human_TB/datasets/subclustering_objects/sct_integrated_lung_Fibroblast.rds")
+```
+
+```{r}
+obj.filtered<-subset(obj, idents = unique(Idents(obj))[grep('Doublets', unique(Idents(obj)))], invert=T )
+obj.filtered
+```
+```{r}
+source("/Users/nl646/Desktop/Shalek_Lab/MuOrg_Pilots_8.2021/1_Preprocess/Build_Obj_BEM_v1.1.R")
+DefaultAssay(obj.filtered)<-'RNA'
+res_min = 0.2
+res_max = 1
+
+obj.filtered= GenClustObj(obj.filtered, sample_name ='fib.doublet.removed',  res_min = res_min, res_max = res_max, cluster_assay = "SCT", figdir = 'plots/subclustering')
+obj.filtered <- RunUMAP(obj.filtered, reduction = "pca", dims = obj.filtered@misc$n_pcs)
+```
+
+```{r}
+obj.filtered$cell.type.v3<-droplevels(obj.filtered$cell.type.v3)
+Idents(obj.filtered)<-obj.filtered$cell.type.v3
+cluster.markers<-FindAllMarkers(obj.filtered, assay='RNA', only.pos = TRUE,min.pct = 0.25, logfc.threshold = 0.25)
+cluster.markers%>%write_csv('../new_man_tables/fib_doubRemoved_subset_de_markers.csv')
+DefaultAssay(obj.filtered)<-'RNA'
+obj.filtered<-ScaleData(obj.filtered, assay = 'RNA', features = rownames(obj.filtered))
+cluster.markers %>%
+    group_by(cluster) %>%
+    slice_max(n = 10,order_by=avg_log2FC)-> top10
+top10
+```
+
+
+
+```{r}
+library(scales)
+
+colors=hue_pal()(5)
+names(colors)<-unique(Idents(obj.filtered))
+
+pdf('../new_man_figs/Fig3/fib_celltype_umap.pdf', 12, 8)
+DimPlot(obj.filtered,cols = colors)
+dev.off()
+pdf('../new_man_figs/Fig3/fib_patient_umap.pdf', 12, 8)
+DimPlot(obj.filtered, group.by = 'Patient')
+dev.off()
+pdf('../new_man_figs/Fig3/fib_diseaseStatue_umap.pdf', 12, 8)
+DimPlot(obj.filtered, group.by = 'Disease_Status')
+dev.off()
+```
+
+```{r}
+
+pdf('../new_man_figs/Fig3/fibroblast_marker_heatmap.pdf', 12, 8)
+DoHeatmap(obj.filtered, features = unique(top10$gene), assay='RNA', group.colors=colors) 
+dev.off()
+```
+```{r}
+
+library(ggplot2)
+library(Patchwork)
+# options(repr.plot.height = 4, repr.plot.width = 20)
+pdf('../new_man_figs/Fig3/fib_dotplot_subtypeDE_byDisease.pdf', 20,8)
+p1<-DotPlot(obj.filtered, features=rev(unique(top10$gene)), group.by='Disease_Status', assay = 'RNA')+ coord_flip()+ scale_colour_viridis(option="magma")
+p2<-DoHeatmap(obj.filtered, features = unique(top10$gene), assay='RNA', group.colors=colors) 
+print(p1+p2)
+dev.off()
+
+```
+```{r}
+saveRDS(obj.filtered, "~/Desktop/Shalek_Lab/Human_TB/datasets/subclustering_objects/sct_integrated_lung_Fibroblast_doubRemoved.rds")
+```
+
+
+

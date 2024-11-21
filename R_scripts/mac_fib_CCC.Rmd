@@ -1,0 +1,469 @@
+---
+title: "LIANA macrophage fibroblast analysis"
+output: html_notebook
+---
+
+```{r}
+library(Seurat)
+library(liana)
+library(tidyverse)
+library(magrittr)
+library(SingleCellExperiment)
+
+library(viridis)
+library(patchwork)
+library(ggpubr)
+library(cowplot)
+library(rstatix)
+library(pheatmap)
+```
+```{r}
+liana_test<-readRDS('~/Desktop/Shalek_Lab/Human_TB/datasets/new_liana_run_TB_only_t_combined_celltype.rds')
+liana_test
+ordered_groups<-c( 'Monocytes','Inflammed_Monocytes','CD16_Monocytes','Low_complexity_Monocytes','Type1_IFN_Response_Monocytes', 'Macrophages|ARL4C,EMP1'  ,'Alveolar_Macrophages','Macrophages|Heatshock','Macrophages|LGMN,SEPP1','Macrophages|SPP1,CHI3L1','Fibroblast|SERPINE2,COL1A1', 'Fibroblast|MMP1,CXCL5','Fibroblast|IL6,CCL2','Fibroblast|COMP,CILP','Fibroblast|HSP','Neutrophil|MMP9, CST7', 'Neutrophil|Heatshock', 'Neutrophil|GBP1,GBP5', 'AT1', 'AT2','Club cells', 'Endothelial', 'Plasma','B cell','DC', 'Mast', 'NK',  'CD8 cytotoxic T', 'T')
+
+
+source_groups ='Fibroblast|MMP1,CXCL5'
+target_groups = ordered_groups
+specificity = "natmi.edge_specificity"
+magnitude = "sca.LRscore"
+y.label = "Interactions (Ligand -> Receptor)"
+size.label = "Interaction\nSpecificity"
+colour.label = "Expression\nMagnitude"
+
+entities <- c("ligand.complex", "receptor.complex")
+# ntop = 50
+ntop = NULL
+# Modify for the plot
+liana_mod <- liana_test %>%
+   # only keep interactions concordant between methods
+  filter(aggregate_rank <= 0.01) %>% 
+    # Filter to only the cells of interest
+    `if`(!is.null(source_groups),
+         filter(., source %in% source_groups),
+         .) %>%
+    `if`(!is.null(target_groups),
+         filter(., target %in% target_groups),
+         .)
+if(!is.null(ntop)){
+        # Subset to the X top interactions
+        top_int <- liana_mod %>% distinct_at(entities) %>% head(ntop)
+        liana_mod %<>% inner_join(top_int, by=entities)
+    }
+liana_mod %<>%
+        rename(magnitude = !!magnitude) %>%
+        rename(specificity = !!specificity) %>%
+        unite(entities, col = "interaction", sep = " -> ") %>%
+        unite(c("source", "target"), col = "source_target", remove = FALSE)
+interactions_order <- liana_mod %>% pull("interaction") %>% unique()
+
+liana_mod %<>%
+        mutate(interaction = factor(interaction, levels=rev(interactions_order))) %>%
+        mutate(across(where(is.character), as.factor))
+cbPalette <- c("#E69F00", "#56B4E9",
+                   "#009E73", "#F0E442", "#0072B2",
+                   "#D55E00", "#CC79A7", "#DF69A7")
+size_range = c(2, 10)
+# Perform hierarchical clustering on the 'magnitude' variable
+magnitude_mat<-liana_mod[,c('target','interaction', 'magnitude')]%>%pivot_wider(id_cols=target, names_from = interaction, values_from = 'magnitude')%>%as.data.frame()
+rownames(magnitude_mat)<-magnitude_mat$target
+magnitude_mat<-magnitude_mat[,-c(1)]
+magnitude_mat[is.na(magnitude_mat)]<-0
+library(pheatmap)
+library(dendextend)
+library(ggtree)
+
+magnitude_dist_x <- cor(t(magnitude_mat)) # Create a distance matrix between targets
+correlation.heatmap <- pheatmap(magnitude_dist_x)
+magnitude_clust_x <-correlation.heatmap$tree_row
+
+magnitude_dist_y <- cor(magnitude_mat)
+correlation.heatmap <- pheatmap(magnitude_dist_y)
+magnitude_clust_y <- correlation.heatmap$tree_row
+# Reorder the data based on the clustering results
+liana_mod$target <- factor(liana_mod$target, levels = magnitude_clust_x$labels[magnitude_clust_x$order])
+liana_mod$interaction <- factor(liana_mod$interaction, levels = magnitude_clust_y$labels[magnitude_clust_y$order])
+
+    dotplot<-ggplot(liana_mod,
+               aes(x = target,
+                   y = interaction,
+                   colour = magnitude,
+                   size = specificity,
+                   group = target
+               )) +
+            geom_point() +
+            scale_color_gradientn(colours = viridis::viridis(20)) +
+            scale_size_continuous(range = size_range) +
+       scale_y_discrete(position = "right")+ #move the y label to the right
+            # scale_x_discrete(position = "right") +
+            labs(y = y.label,
+                 colour = colour.label,
+                 size = size.label,
+                 x = "Target",
+            ) +
+            theme_bw(base_size = 20) +
+            # theme(
+            #     legend.text = element_text(size = 16),
+            #     axis.text.x = element_text(colour =
+            #                                    cbPalette[1:length(
+            #                                        unique(liana_mod$source)
+            #                                    )],
+            #                                face = "bold",
+            #                                size = 23),
+            #     axis.title.x = element_text(colour = "gray6"),
+            #     axis.text.y = element_text(size = 18,
+            #                                vjust = 0.5),
+            #     legend.title = element_text(size = 18),
+            #     panel.spacing = unit(0.1, "lines"),
+            #     strip.background = element_rect(fill = NA),
+            #     plot.title = element_text(vjust = 0, hjust=0.5, colour = "gray6"),
+            #     strip.text = element_text(size = 24, colour = "gray6") #,
+            #     # strip.text.y.left = element_text(angle = 0)
+            # )
+            theme(
+            # Hide default x and y axes
+             axis.text.x = element_text(colour =
+                                               cbPalette[1:length(
+                                                   unique(liana_mod$source)
+                                               )],
+                                           face = "bold",
+                                        angle=90,
+                                           size = 10,  vjust = 0.5, hjust=1),
+             axis.text.y = element_text(size = 10,
+                                           vjust = 0.5),
+            axis.title = element_blank(),
+            axis.ticks = element_blank(),
+            # Customize dendrogram appearance (adjust as needed)
+            panel.grid = element_blank(),
+            plot.margin = margin(20, 20, 20, 20),
+            # Customize dendrogram lines
+            panel.background = element_blank(), #remove panel background
+            panel.grid.major = element_line(size = 0.5, linetype = 'solid',
+                                colour = "#ECECEC"), 
+            panel.spacing = unit(0.1, "lines"),
+            legend.title = element_text(size = 10),
+            plot.title = element_text(vjust = 0, hjust=0.5, colour = "gray6"),
+            strip.text = element_text(size = 24, colour = "gray6")
+        )+
+    theme(text = element_text(family = "Helvetica"))
+    # Add dendrogram to the x-axis
+    ggtree_plot_col<- ggtree(magnitude_clust_x) +geom_tiplab(align=TRUE, linetype = 'solid', size=0)+ layout_dendrogram()
+    # ggtree_plot_col<-ggtree_plot_col+ xlim2(dotplot)
+    ggtree_plot <- ggtree(magnitude_clust_y)+geom_tiplab(align=TRUE, linetype = 'solid', size=0)
+    # plot_grid(ggtree_plot_row, NULL, dotplot, nrow = 1, rel_widths = c(0.5,-0.05, 2), align = 'h')
+    library(patchwork)
+    # pdf('../new_man_figs/Fig4/fib_mmp1_cxcl5_subcluster_liana_clustered_dotplot.pdf', 12, 15)
+    
+    
+plot_spacer() + plot_spacer() + ggtree_plot_col +
+    plot_spacer() + plot_spacer() + plot_spacer() +
+    ggtree_plot + plot_spacer() + dotplot + 
+    plot_layout(ncol = 3, widths = c(0.7, -0.1, 4), heights = c(0.9, -0.1, 4))
+```
+```{r}
+    pdf('~/Desktop/Shalek_Lab/Human_TB/new_man_figs/Fig4/fib_mmp1_cxcl5_subcluster_liana_all_sig_interaction_clustered_dotplot.pdf', 10, 30)
+    plot_spacer() + plot_spacer() + ggtree_plot_col +
+    plot_spacer() + plot_spacer() + plot_spacer() +
+    ggtree_plot + plot_spacer() + dotplot + 
+    plot_layout(ncol = 3, widths = c(0.7, -0.1, 4), heights = c(0.3, -0.1, 4))
+    dev.off()
+```
+## plot upregulated 
+```{r}
+liana_ctr<-readRDS('~/Desktop/Shalek_Lab/Human_TB/datasets/new_liana_ctr_only_t_combined_celltype.rds')
+liana_trunc_ctr<-liana_ctr%>%filter(aggregate_rank <= 0.01)
+
+liana_TB<-readRDS('~/Desktop/Shalek_Lab/Human_TB/datasets/new_liana_run_TB_only_t_combined_celltype.rds')
+liana_trunc_tb<-liana_TB%>%filter(aggregate_rank <= 0.01)
+
+
+liana_trunc_ctr<-liana_trunc_ctr[,c("source", "target", "ligand.complex", "receptor.complex","natmi.edge_specificity")]
+liana_trunc_tb<-liana_trunc_tb[,c("source", "target", "ligand.complex", "receptor.complex","natmi.edge_specificity")]
+
+liana_trunc_tb <- liana_trunc_tb %>% 
+        mutate(edge_weight_TB=natmi.edge_specificity)
+liana_trunc_ctr <- liana_trunc_ctr %>% 
+        mutate(edge_weight_CTR=natmi.edge_specificity)
+liana_both<-merge(x=liana_trunc_tb,y=liana_trunc_ctr, 
+        by=c("source", "target", "ligand.complex", "receptor.complex"), all=TRUE)
+
+liana_both[is.na(liana_both)] <- 0
+
+liana_both$edge_FC<-liana_both$edge_weight_TB/(liana_both$edge_weight_CTR+1e-4)
+
+
+liana_both$edge_FC[liana_both$edge_FC == Inf] =max(liana_both$edge_FC[liana_both$edge_FC != Inf])
+```
+
+
+```{r}
+entities <- c("ligand.complex", "receptor.complex")
+ntop = NULL
+# ntop = 20
+# Modify for the plot
+liana_test<-liana_both%>%filter(edge_FC>1)%>%filter(target!='Proliferating')%>%filter(source!='Proliferating')
+source_groups ='Fibroblast|MMP1,CXCL5'
+target_groups = unique(liana_test$target)
+specificity = "natmi.edge_specificity.x" #specificity in Tb
+magnitude = "edge_FC"
+y.label = "Interactions (Ligand -> Receptor)"
+size.label = "Interaction\nSpecificity \n(natmi.edge_specificity)"
+colour.label = "edge_FC"
+
+plot_clustered_dotplot<-function(liana_test,source_groups,target_groups,specificity,magnitude,y.label,size.label,colour.label,ntop,entities){
+liana_mod <- liana_test %>%
+   # only keep interactions concordant between methods
+    # Filter to only the cells of interest
+    `if`(!is.null(source_groups),
+         filter(., source %in% source_groups),
+         .) %>%
+    `if`(!is.null(target_groups),
+         filter(., target %in% target_groups),
+         .)
+if(!is.null(ntop)){
+        # Subset to the X top interactions
+        top_int <- liana_mod %>% distinct_at(entities) %>% head(ntop)
+        liana_mod %<>% inner_join(top_int, by=entities)
+    }
+liana_mod %<>%
+        rename(magnitude = !!magnitude) %>%
+        rename(specificity = !!specificity) %>%
+        unite(entities, col = "interaction", sep = " -> ") %>%
+        unite(c("source", "target"), col = "source_target", remove = FALSE)
+interactions_order <- liana_mod %>% pull("interaction") %>% unique()
+
+liana_mod %<>%
+        mutate(interaction = factor(interaction, levels=rev(interactions_order))) %>%
+        mutate(across(where(is.character), as.factor))
+cbPalette <- c("#E69F00", "#56B4E9",
+                   "#009E73", "#F0E442", "#0072B2",
+                   "#D55E00", "#CC79A7", "#DF69A7")
+size_range = c(2, 10)
+# Perform hierarchical clustering on the 'magnitude' variable
+magnitude_mat<-liana_mod[,c('target','interaction', 'magnitude')]%>%pivot_wider(id_cols=target, names_from = interaction, values_from = 'magnitude')%>%as.data.frame()
+rownames(magnitude_mat)<-magnitude_mat$target
+magnitude_mat<-magnitude_mat[,-c(1)]
+magnitude_mat[is.na(magnitude_mat)]<-0
+
+
+magnitude_dist_x <- cor(t(magnitude_mat)) # Create a distance matrix between targets
+correlation.heatmap <- pheatmap(magnitude_dist_x)
+magnitude_clust_x <-correlation.heatmap$tree_row
+
+magnitude_dist_y <- cor(magnitude_mat)
+correlation.heatmap <- pheatmap(magnitude_dist_y)
+magnitude_clust_y <- correlation.heatmap$tree_row
+# Reorder the data based on the clustering results
+liana_mod$target <- factor(liana_mod$target, levels = magnitude_clust_x$labels[magnitude_clust_x$order])
+liana_mod$interaction <- factor(liana_mod$interaction, levels = magnitude_clust_y$labels[magnitude_clust_y$order])
+
+    dotplot<-ggplot(liana_mod,
+               aes(x = target,
+                   y = interaction,
+                   colour = magnitude,
+                   size = specificity,
+                   group = target
+               )) +
+            geom_point() +
+            scale_color_gradientn(colours = rev(viridis::viridis(50))) +
+            scale_size_continuous(range = size_range) +
+       scale_y_discrete(position = "right")+ #move the y label to the right
+            # scale_x_discrete(position = "right") +
+            labs(y = y.label,
+                 colour = colour.label,
+                 size = size.label,
+                 x = "Target",
+            ) +
+            theme_bw(base_size = 20) +
+            theme(
+            # Hide default x and y axes
+             axis.text.x = element_text(colour =
+                                               cbPalette[1:length(
+                                                   unique(liana_mod$source)
+                                               )],
+                                           face = "bold",
+                                        angle=90,
+                                           size = 10,  vjust = 0.5, hjust=1),
+             axis.text.y = element_text(size = 10,
+                                           vjust = 0.5),
+            axis.title = element_blank(),
+            axis.ticks = element_blank(),
+            # Customize dendrogram appearance (adjust as needed)
+            panel.grid = element_blank(),
+            plot.margin = margin(20, 20, 20, 20),
+            # Customize dendrogram lines
+            panel.background = element_blank(), #remove panel background
+            panel.grid.major = element_line(size = 0.5, linetype = 'solid',
+                                colour = "#ECECEC"), 
+            panel.spacing = unit(0.1, "lines"),
+            legend.title = element_text(size = 10),
+            plot.title = element_text(vjust = 0, hjust=0.5, colour = "gray6"),
+            strip.text = element_text(size = 24, colour = "gray6")
+        )+
+    theme(text = element_text(family = "Helvetica"))
+    # Add dendrogram to the x-axis
+    ggtree_plot_col<- ggtree(magnitude_clust_x) +geom_tiplab(align=TRUE, linetype = 'solid', size=0)+ layout_dendrogram()
+    # ggtree_plot_col<-ggtree_plot_col+ xlim2(dotplot)
+    ggtree_plot <- ggtree(magnitude_clust_y)+geom_tiplab(align=TRUE, linetype = 'solid', size=0)
+    p<-plot_spacer() + plot_spacer() + ggtree_plot_col +
+plot_spacer() + plot_spacer() + plot_spacer() +
+ggtree_plot + plot_spacer() + dotplot + 
+plot_layout(ncol = 3, widths = c(0.7, -0.1, 4), heights = c(0.9, -0.1, 4))
+    return(p)
+}
+    
+
+
+```
+```{r}
+    pdf('~/Desktop/Shalek_Lab/Human_TB/new_man_figs/Fig4/fib_mmp1_cxcl5_subcluster_liana_all_TBUpregulated_interaction_clustered_dotplot.pdf', 10, 30)
+    plot_spacer() + plot_spacer() + ggtree_plot_col +
+    plot_spacer() + plot_spacer() + plot_spacer() +
+    ggtree_plot + plot_spacer() + dotplot + 
+    plot_layout(ncol = 3, widths = c(0.7, -0.1, 4), heights = c(0.3, -0.1, 4))
+    dev.off()
+```
+
+
+```{r}
+ntop=20
+res<-plot_clustered_dotplot(liana_test,source_groups,target_groups,specificity,magnitude,y.label,size.label,colour.label,ntop,entities)
+res
+```
+```{r}
+pdf('~/Desktop/Shalek_Lab/Human_TB/new_man_figs/Fig4/fib_mmp1_cxcl5_subcluster_liana_all_TBUpregulated_top20_interaction_clustered_dotplot.pdf', 10, 30)
+    print(res)
+    dev.off()
+```
+# first with fibroblast subtypes as sender to macrophage subsets
+```{r}
+#visualize the interactions strengthen with spp1 as sender
+liana_ctr<-readRDS('~/Desktop/Shalek_Lab/Human_TB/datasets/new_liana_ctr_only_t_combined_celltype.rds')
+liana_trunc_ctr<-liana_ctr%>%filter(aggregate_rank <= 0.01)
+
+liana_TB<-readRDS('~/Desktop/Shalek_Lab/Human_TB/datasets/new_liana_run_TB_only_t_combined_celltype.rds')
+liana_trunc_tb<-liana_TB%>%filter(aggregate_rank <= 0.01)
+
+
+liana_trunc_ctr<-liana_trunc_ctr[,c("source", "target", "ligand.complex", "receptor.complex","natmi.edge_specificity")]
+liana_trunc_tb<-liana_trunc_tb[,c("source", "target", "ligand.complex", "receptor.complex","natmi.edge_specificity")]
+
+liana_trunc_tb <- liana_trunc_tb %>% 
+        mutate(edge_weight_TB=natmi.edge_specificity)
+liana_trunc_ctr <- liana_trunc_ctr %>% 
+        mutate(edge_weight_CTR=natmi.edge_specificity)
+liana_both<-merge(x=liana_trunc_tb,y=liana_trunc_ctr, 
+        by=c("source", "target", "ligand.complex", "receptor.complex"), all=TRUE)
+
+liana_both[is.na(liana_both)] <- 0
+
+liana_both$edge_FC<-liana_both$edge_weight_TB/(liana_both$edge_weight_CTR+1e-4)
+
+
+liana_both$edge_FC[liana_both$edge_FC == Inf] =max(liana_both$edge_FC[liana_both$edge_FC != Inf])
+
+
+
+poslogFC.cellcell.count <- liana_both%>%filter(edge_FC>1)%>% group_by(source, target)%>% summarise(count.interacts = n())%>%filter(target!='Proliferating')%>%filter(source!='Proliferating')
+neglogFC.cellcell.count <- liana_both%>%filter(edge_FC<1)%>% group_by(source, target)%>% summarise(count.interacts = n())%>%filter(target!='Proliferating')%>%filter(source!='Proliferating')
+
+pos.min.thresh=0
+neg.min.thresh=0
+poslogFC.cellcell.count <- poslogFC.cellcell.count %>% ungroup() %>% dplyr::filter(count.interacts > pos.min.thresh) %>% dplyr::mutate(upregulatedIn = "TB")
+neglogFC.cellcell.count <- neglogFC.cellcell.count %>% ungroup() %>% dplyr::filter(count.interacts > neg.min.thresh) %>% dplyr::mutate(upregulatedIn = "Control")
+
+dataframe.choice <- rbind(poslogFC.cellcell.count, neglogFC.cellcell.count)
+dataframe.choice <- dataframe.choice[,c("source", "target", "count.interacts", "upregulatedIn")]
+
+library(circlize)
+```
+
+```{r}
+library(PNWColors)
+fibroblast_subsets<-unique(dataframe.choice$source)%>%grep('Fibroblast',.,value=T)
+mac_subsets<-unique(dataframe.choice$source)%>%grep('Macrophages',.,value=T)
+dataframe.choice<-dataframe.choice%>%filter(source%in%fibroblast_subsets)%>%filter(target%in%mac_subsets)%>%filter(upregulatedIn=='TB')
+
+dataframe.choice$ReceiverGroup<-dataframe.choice$target
+# dataframe.choice$SenderGroup<-dataframe.choice$source
+dataframe.choice$SenderGroup<-'Fibroblast'
+dataframe.choice$SenderGroup<-factor(dataframe.choice$SenderGroup)
+dataframe.choice$ReceiverGroup<-factor(dataframe.choice$ReceiverGroup)
+dataframe.choice<-dataframe.choice[,c('SenderGroup','ReceiverGroup','count.interacts', 'upregulatedIn',
+                                      'source','target')]
+
+# order.vec.high<-c(fibroblast_subsets, mac_subsets)
+order.vec.high<-c('Fibroblast', mac_subsets)
+# sender.colors.groups<-c("#11c2b5", "#72e1e1",  "#FB9A99",  "#FF7F00", "#dcbe9b")
+sender.colors.groups<-c("#11c2b5")
+# names(sender.colors.groups)<-fibroblast_subsets
+names(sender.colors.groups)<-'Fibroblast'
+receiver.colors.groups<-c("#5d74a5", "#b0cbe7","#cb74ad", "#eba07e", "#a8554e")
+names(receiver.colors.groups)<-mac_subsets
+combined.colors <- c(sender.colors.groups, receiver.colors.groups)
+
+circos.high.fcn <- function(){
+  circos.clear()
+  circos.par(start.degree = 270)
+  chordDiagram(dataframe.choice, directional = -1,
+               order = order.vec.high, big.gap = 15,
+               # link.visible = ((dataframe.choice$upregulatedIn == "TB")),
+               grid.col = combined.colors[names(combined.colors)%in%order.vec.high], link.zindex = rank(dataframe.choice[[3]]),
+               direction.type = c("arrows", "diffHeight"), diffHeight  = 0, link.arr.type = "big.arrow",
+               annotationTrack = c("grid"), annotationTrackHeight = mm_h(4),
+               preAllocateTracks = list(track.height = mm_h(6), track.margin = c(mm_h(2), 0)))
+  for(si in get.all.sector.index()) {
+    # label.ii <- substr(si, 3, nchar(si))
+    label.ii<-si
+    xlim = get.cell.meta.data("xlim", sector.index = si, track.index = 2)
+    ylim = get.cell.meta.data("ylim", sector.index = si, track.index = 2)
+    circos.text(mean(xlim), mean(ylim), label.ii, sector.index = si, track.index = 2, 
+                facing = "bending.inside", niceFacing = TRUE, col = "white", cex = 0.32)
+  }
+  highlight.sector(dataframe.choice$SenderGroup, track.index = 1, col = "#f46d5a",
+                   text = "Sender", cex = 1.2, text.col = "white", facing = "bending.inside", niceFacing = FALSE)
+  highlight.sector(dataframe.choice$ReceiverGroup, track.index = 1, col = "#ffb1a6",
+                   text = "Receiver", cex = 1.2, facing = "bending.inside", text.col = "white", niceFacing = FALSE)
+  title("Network of Interactions\nStrengthened in TB disease lungs")
+}
+
+circos.agrob.high <- cowplot::as_grob(circos.high.fcn)
+ggarrange(circos.agrob.high)
+pdf("~/Desktop/Shalek_Lab/Human_TB/new_man_figs/Fig4/circo_fibroblasts_sending_macLIANA_TB_upregulated.pdf", width = width.in, height = height.in, useDingbats = FALSE)
+  ggarrange(circos.agrob.high)
+dev.off()
+```
+
+```{r}
+binom.test(x = sum(dataframe.choice[dataframe.choice$ReceiverGroup == "Macrophages|SPP1,CHI3L1",]$count.interacts),
+           n = sum(dataframe.choice$count.interacts),
+           p = 1/length(unique(dataframe.choice$ReceiverGroup)))
+```
+```{r}
+binom.test(x = sum(dataframe.choice[dataframe.choice$ReceiverGroup == "Macrophages|LGMN,SEPP1",]$count.interacts),
+           n = sum(dataframe.choice$count.interacts),
+           p = 1/length(unique(dataframe.choice$ReceiverGroup)))
+```
+```{r}
+binom.test(x = sum(dataframe.choice[dataframe.choice$ReceiverGroup == "Macrophages|Heatshock",]$count.interacts),
+           n = sum(dataframe.choice$count.interacts),
+           p = 1/length(unique(dataframe.choice$ReceiverGroup)))
+```
+```{r}
+binom.test(x = sum(dataframe.choice[dataframe.choice$ReceiverGroup == "Macrophages|ARL4C,EMP1",]$count.interacts),
+           n = sum(dataframe.choice$count.interacts),
+           p = 1/length(unique(dataframe.choice$ReceiverGroup)))
+```
+```{r}
+binom.test(x = sum(dataframe.choice[dataframe.choice$ReceiverGroup == "Alveolar_Macrophages",]$count.interacts),
+           n = sum(dataframe.choice$count.interacts),
+           p = 1/length(unique(dataframe.choice$ReceiverGroup)))
+```
+it seems the spp1 was the second largest receiver from fibroblasts
+```{r}
+dataframe.choice
+```
+```{r}
+dataframe.choice %>%
+  pivot_wider(id_cols=c('SenderGroup'), names_from = ReceiverGroup, values_from = count.interacts)
+```

@@ -1,0 +1,93 @@
+---
+title: "WGCNA enrichment analysis "
+output: html_notebook
+---
+
+```{r}
+library(clusterProfiler)
+library(enrichplot)
+library(Seurat)
+library(ggplot2)
+library(wesanderson)
+library(msigdbr)
+library(dplyr)
+library(tidyverse)
+modules<-read.csv('../datasets/subclustering_objects/fibroblast_hgWGCNA_moduleAssignment.csv')
+modules
+```
+```{r}
+m1_genes<-modules%>%filter(module=='Fibroblast-M1')%>%arrange(desc('kME_Fibroblast.M1'))%>%pull(gene_name)
+```
+
+```{r}
+library(msigdbr)
+m_df <- msigdbr(species = "Homo sapiens")
+head(m_df, 2) %>% as.data.frame
+
+organism = "org.Hs.eg.db"
+BiocManager::install(organism, character.only = TRUE)
+library(organism, character.only = TRUE)
+```
+```{r}
+# select specific gene sets, leave C7 out for now
+h_t2g <- m_df%>%filter(gs_cat%in%c('H')) %>% 
+   dplyr::select(gs_name, gene_symbol)
+  # dplyr::select(gs_name, entrez_gene)
+gobp_t2g <- m_df%>%filter(gs_cat%in%c( 'C5'))%>%filter(gs_subcat=='GO:BP')%>% dplyr::select(gs_name, gene_symbol)
+gomf_t2g <- m_df%>%filter(gs_cat%in%c( 'C5'))%>%filter(gs_subcat=='GO:MF')%>% dplyr::select(gs_name, gene_symbol)
+kegg_t2g<- m_df%>%filter(gs_cat%in%c('C2'))%>%filter(gs_subcat=='CP:KEGG')%>%dplyr::select(gs_name, gene_symbol)
+reactome_t2g<- m_df%>%filter(gs_cat%in%c('C2'))%>%filter(gs_subcat=='CP:REACTOME')%>%dplyr::select(gs_name, gene_symbol)
+biocarta_t2g<- m_df%>%filter(gs_cat%in%c('C2'))%>%filter(gs_subcat=='CP:BIOCARTA')%>%dplyr::select(gs_name, gene_symbol)
+```
+
+```{r}
+em <- enricher(m1_genes, TERM2GENE=gobp_t2g, pvalueCutoff = 0.05, universe=background_genes,
+                      qvalueCutoff = 0.10)
+dotplot(em)
+```
+
+```{r}
+obj.filtered<-readRDS("../datasets/subclustering_objects/sct_integrated_lung_Neutrophil_doub_removed.rds")
+DefaultAssay(obj.filtered)<- 'RNA'
+background_genes<-rownames(obj.filtered) #this list should be the same for all subsets 
+gs<-list('Hallmark'=h_t2g,'GOBP'=gobp_t2g ,'KEGG'=kegg_t2g, 'GOMF'=gomf_t2g,'REACTOME' =reactome_t2g, 'BIOCARTA'=biocarta_t2g)
+
+
+cell_types_to_run<-c("Fibroblast-M1", "Fibroblast-M2" ,"Fibroblast-M3","Fibroblast-M4", "Fibroblast-M5", "Fibroblast-M6","Fibroblast-M7")
+enrichr_summary<-vector('list', length=length(cell_types_to_run))
+for (i in 1:length(cell_types_to_run)){
+  cell_type_<-cell_types_to_run[i]
+  print(cell_type_)
+  enrichr_results<-vector('list', length=length(gs))
+  # Exctract significant results (padj < 0.05)
+  kme<-paste0('kME_',gsub("-", ".", cell_type_))
+  genes <- modules%>%filter(module==cell_type_)%>%arrange(desc(kme))%>%pull(gene_name)
+  
+
+ 
+  for (j in 1:length(gs)){
+    print(names(gs)[[j]])
+    em <- enricher(genes, TERM2GENE = gs[[j]],universe=background_genes)
+
+    enrichr_results[[j]] <- em %>% as.data.frame()
+     # plot if there are sig difference
+    if (nrow(enrichr_results[[j]])>0){
+    
+      enrichr_results[[j]]['GS']<-names(gs)[[j]]
+      p<-dotplot(em)
+      pdf(sprintf('enrichr/plots/msigdb_%s_%s.pdf',names(gs)[[j]], gsub('/', '.', cell_type_)), 8, 8)
+      print(p)
+      dev.off()
+    }
+  }
+
+  enrichr_results = do.call(rbind, enrichr_results)
+  if (nrow(enrichr_results)>0){ # will error out if zero rows
+      enrichr_results['cell_type']<-cell_type_
+  }
+  enrichr_summary[[i]] <-enrichr_results
+}
+enrichr_summary = do.call(rbind, enrichr_summary)
+enrichr_summary%>%write.csv('enrichr/enrichr_summary_fibroblast_wgcna.csv')
+```
+
